@@ -234,4 +234,80 @@ Pass lightweight views to workers (no full content):
 ```python
 cards = store.card_view("type=hypothesis")  # [{id, type, description, tags}]
 ```
+
+### Store search (optional, general guidance)
+
+Use store search when it can save duplicate work. A simple pattern:
+1) Search by type or description keywords.
+2) If nothing looks relevant, proceed to analyze context directly.
+
+```python
+# Quick check before doing fresh analysis
+hits = store.search('type=note desc~"ppo"')
+if hits:
+    print("Related findings:", hits[:3])
+else:
+    print("No matches; analyze context directly.")
+```
+
+If you need a lightweight overview, use:
+```python
+summary = store.suggest('desc~"trainer"')
+print(summary["types"], summary["tags"])
+```
+"""
+
+SHARED_STORE_PROMPT_ADDON = """
+## Shared Store for Parallel Workers
+
+If a shared store is enabled for this run, parallel workers can see each other's findings in real-time.
+
+### Viewing other workers' findings
+
+```python
+# See what ALL workers (including yourself) have found
+all_findings = store.view("type=evidence")
+for obj in all_findings:
+    print(f"Worker {obj['worker']} found: {obj['description']}")
+
+# See only what OTHER workers have found (excludes your own)
+others = store.view_others("type=evidence")
+for obj in others:
+    print(f"Worker {obj['worker']} found: {obj['description']}")
+```
+
+### Creating objects (automatically attributed to you)
+
+```python
+# Your creates are automatically attributed to your worker ID
+my_id = store.create(
+    type="evidence",
+    description="Found key insight about X",
+    content={"quote": "...", "analysis": "..."}
+)
+```
+
+### Spawning parallel workers
+
+```python
+# Spawn multiple workers in parallel - they can share the same store if enabled
+tasks = [
+    {"prompt": f"Analyze chunk {i}: {chunk}"}
+    for i, chunk in enumerate(chunks)
+]
+commits = rlm_worker_batched(tasks, max_parallel=8)
+
+# After completion, merge their commits:
+for commit in commits:
+    apply_commit(commit)
+```
+
+### Query syntax
+
+The store supports these query filters:
+- `type=note` - filter by object type
+- `tag=important` - filter by tag
+- `worker=worker_1_abc123` - filter by worker ID
+- `desc~"keyword"` - description contains keyword
+- `parent=abc123` - filter by parent ID
 """

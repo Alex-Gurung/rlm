@@ -22,6 +22,7 @@ from rlm.utils.parsing import (
 )
 from rlm.utils.prompts import (
     RLM_SYSTEM_PROMPT,
+    SHARED_STORE_PROMPT_ADDON,
     SMALL_MODEL_PROMPT_ADDON,
     QueryMetadata,
     build_rlm_system_prompt,
@@ -93,10 +94,23 @@ class RLM:
         self.depth = depth
         self.max_depth = max_depth
         self.max_iterations = max_iterations
+        self.store_prompt = store_prompt
+
+        # Build system prompt with optional addons
         base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
-        self.system_prompt = base_prompt + SMALL_MODEL_PROMPT_ADDON if store_prompt else base_prompt
+        if store_prompt:
+            self.system_prompt = base_prompt + SMALL_MODEL_PROMPT_ADDON + SHARED_STORE_PROMPT_ADDON
+        else:
+            self.system_prompt = base_prompt
+
         self.logger = logger
         self.verbose = VerbosePrinter(enabled=verbose)
+
+        # Shared store for parallel workers (created lazily when enabled and local env)
+        self._shared_store = None
+        self._shared_store_enabled = False
+        if self.environment_kwargs.get("shared_store", False):
+            self._shared_store_enabled = True
 
         # Persistence support
         self.persistent = persistent
@@ -170,11 +184,24 @@ class RLM:
             env_kwargs["context_payload"] = prompt
             env_kwargs["depth"] = self.depth + 1  # Environment depth is RLM depth + 1
             env_kwargs["max_depth"] = self.max_depth
+            env_kwargs["worker_system_prompt"] = self.system_prompt
+            env_kwargs["worker_max_iterations"] = self.max_iterations
+            env_kwargs["worker_environment_kwargs"] = self.environment_kwargs
+            env_kwargs["worker_other_backends"] = self.other_backends
+            env_kwargs["worker_other_backend_kwargs"] = self.other_backend_kwargs
             # Pass backend config for nested worker spawning
             env_kwargs["backend"] = self.backend
             env_kwargs["backend_kwargs"] = self.backend_kwargs
             # Pass logger for hierarchical logging
             env_kwargs["logger"] = self.logger
+
+            # Create shared store for local environments when explicitly enabled
+            if self._shared_store_enabled and self.environment_type == "local":
+                if self._shared_store is None or not self.persistent:
+                    from rlm.core.shared_store import SharedStore
+                    self._shared_store = SharedStore()
+                env_kwargs["shared_store"] = self._shared_store
+
             environment: BaseEnv = get_environment(self.environment_type, env_kwargs)
 
             if self.persistent:

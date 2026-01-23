@@ -13,11 +13,15 @@ import uuid
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from concurrent.futures import ThreadPoolExecutor
+
 from rlm.core.comms_utils import LMRequest, send_lm_request, send_lm_request_batched
 from rlm.core.commit import Commit, MergeResult, apply_commit, parse_commit
+from rlm.core.shared_store import SharedStore, WorkerStoreProxy
 from rlm.core.store import SpanRef, Store
 from rlm.core.types import CommitEvent, REPLResult, RLMChatCompletion
 from rlm.environments.base_env import NonIsolatedEnv
+from rlm.utils.prompts import COMMIT_PROTOCOL_PROMPT_ADDON
 
 if TYPE_CHECKING:
     from rlm.core.rlm import RLM
@@ -138,7 +142,15 @@ class LocalREPL(NonIsolatedEnv):
         subcall_budget: int = 64,
         backend: str | None = None,
         backend_kwargs: dict[str, Any] | None = None,
+        worker_system_prompt: str | None = None,
+        worker_max_iterations: int | None = None,
+        worker_environment_kwargs: dict[str, Any] | None = None,
+        worker_other_backends: list[str] | None = None,
+        worker_other_backend_kwargs: list[dict[str, Any]] | None = None,
+        worker_commit_prompt: bool = True,
         logger: "RLMLogger | None" = None,
+        shared_store: SharedStore | None = None,
+        worker_id: str | None = None,
         **kwargs,
     ):
         super().__init__(persistent=persistent, depth=depth, **kwargs)
@@ -161,12 +173,26 @@ class LocalREPL(NonIsolatedEnv):
         # Backend config for spawning nested RLM workers
         self._backend = backend
         self._backend_kwargs = backend_kwargs or {}
+        self._worker_system_prompt = worker_system_prompt
+        self._worker_max_iterations = worker_max_iterations
+        self._worker_environment_kwargs = worker_environment_kwargs or {}
+        self._worker_other_backends = worker_other_backends
+        self._worker_other_backend_kwargs = worker_other_backend_kwargs
+        self._worker_commit_prompt = worker_commit_prompt
 
         # Logger for hierarchical logging (passed to nested workers)
         self._logger = logger
 
         # Track commit events during code execution
         self._pending_commit_events: list[CommitEvent] = []
+
+        # Shared store for parallel workers
+        self._shared_store = shared_store
+        if shared_store is not None:
+            # Generate worker_id if not provided
+            self._worker_id = worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
+        else:
+            self._worker_id = worker_id
 
         # Setup globals, locals, and modules in environment.
         self.setup()
@@ -192,7 +218,13 @@ class LocalREPL(NonIsolatedEnv):
         self._pending_llm_calls: list[RLMChatCompletion] = []
 
         # Create store for hierarchical data management
-        self.store = Store()
+        # If shared_store is provided, use a WorkerStoreProxy; otherwise create isolated Store
+        if self._shared_store is not None:
+            worker_id = self._worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
+            self._worker_id = worker_id
+            self.store = WorkerStoreProxy(self._shared_store, worker_id)
+        else:
+            self.store = Store()
         self.store.set_llm_batch_fn(self._llm_query_batched)
 
         # Add helper functions
@@ -206,6 +238,7 @@ class LocalREPL(NonIsolatedEnv):
 
         # Commit protocol globals
         self.globals["rlm_worker"] = self._rlm_worker
+        self.globals["rlm_worker_batched"] = self._rlm_worker_batched
         self.globals["parse_commit"] = parse_commit
         self.globals["apply_commit"] = self._apply_commit
         self.globals["Commit"] = Commit
@@ -292,7 +325,7 @@ class LocalREPL(NonIsolatedEnv):
             from rlm.core.rlm import RLM
 
             # Build worker prompt and context payload
-            worker_prompt = self._build_worker_prompt(prompt)
+            worker_prompt = prompt
             worker_context: dict[str, Any] = {
                 "task": prompt,
                 "depth": self.depth,
@@ -317,13 +350,34 @@ class LocalREPL(NonIsolatedEnv):
                 )
 
             # Create nested RLM
+            worker_system_prompt = self._worker_system_prompt
+            if self._worker_commit_prompt:
+                if worker_system_prompt:
+                    worker_system_prompt = worker_system_prompt + "\n" + COMMIT_PROTOCOL_PROMPT_ADDON
+                else:
+                    worker_system_prompt = COMMIT_PROTOCOL_PROMPT_ADDON
+
+            # Prepare environment kwargs, passing shared_store if available
+            env_kwargs = self._worker_environment_kwargs.copy()
+            if self._shared_store is not None:
+                env_kwargs["shared_store"] = self._shared_store
+                # Generate unique worker_id for the child
+                child_worker_id = f"worker_{self.depth + 1}_{uuid.uuid4().hex[:6]}"
+                env_kwargs["worker_id"] = child_worker_id
+
             worker_rlm = RLM(
                 backend=self._backend,
                 backend_kwargs=self._backend_kwargs,
                 environment="local",
+                environment_kwargs=env_kwargs,
                 depth=self.depth,  # Worker starts at current depth
                 max_depth=self.max_depth,
-                max_iterations=worker_config.get("max_iterations", 2),
+                max_iterations=worker_config.get(
+                    "max_iterations", self._worker_max_iterations or 2
+                ),
+                custom_system_prompt=worker_system_prompt,
+                other_backends=self._worker_other_backends,
+                other_backend_kwargs=self._worker_other_backend_kwargs,
                 verbose=False,
                 logger=child_logger,  # Pass child logger for hierarchical logging
             )
@@ -353,37 +407,39 @@ class LocalREPL(NonIsolatedEnv):
                 "error": f"Worker failed: {e}",
             }
 
-    def _build_worker_prompt(self, prompt: str) -> str:
-        """Build the worker prompt with task and commit instructions."""
-        parts = []
+    def _rlm_worker_batched(
+        self,
+        tasks: list[dict],
+        max_parallel: int = 8,
+    ) -> list[dict]:
+        """
+        Spawn multiple RLM workers in parallel, all sharing the same store.
 
-        parts.append("## Context")
-        parts.append(
-            "Use the REPL `context` variable (a dict) for task data. "
-            "It may include `task`, `store_cards`, `parent_context`, `depth`, and `max_depth`."
-        )
-        parts.append("")
+        Args:
+            tasks: List of task dicts with keys:
+                - prompt: str (required) - The task prompt for the worker
+                - store_cards: list[dict] (optional) - Store cards to include as context
+                - worker_config: dict (optional) - Config dict with max_iterations, timeout, inherit_context
+            max_parallel: Maximum number of workers to run concurrently (default 8)
 
-        parts.append("## Task")
-        parts.append(prompt)
-        parts.append("")
-        parts.append("## Method Notes")
-        parts.append("- store.create(type, description, content, ...) -> returns an id string")
-        parts.append("- store.card_view(query) -> small list of ids + descriptions")
-        parts.append("- llm_query / llm_query_batched are available; check context['depth'] and context['max_depth']")
-        parts.append("- To finish, output the JSON commit via FINAL(commit_dict) or assign then FINAL_VAR(var_name)")
-        parts.append("## Instructions")
-        parts.append("Return a JSON commit with your findings. Format:")
-        parts.append('```json')
-        parts.append('{')
-        parts.append('  "commit_id": "your_id",')
-        parts.append('  "creates": [{"type": "...", "id": "...", "description": "...", "content": ...}],')
-        parts.append('  "links": [],')
-        parts.append('  "proposes_updates": []')
-        parts.append('}')
-        parts.append('```')
+        Returns:
+            List of commit dicts from each worker, in the same order as tasks
+        """
+        if not tasks:
+            return []
 
-        return "\n".join(parts)
+        def run_worker(task: dict) -> dict:
+            """Run a single worker task."""
+            return self._rlm_worker(
+                prompt=task["prompt"],
+                store_cards=task.get("store_cards"),
+                worker_config=task.get("worker_config"),
+            )
+
+        # Run workers in parallel
+        with ThreadPoolExecutor(max_workers=min(max_parallel, len(tasks))) as executor:
+            futures = [executor.submit(run_worker, task) for task in tasks]
+            return [f.result() for f in futures]
 
     def _apply_commit(self, commit: Commit | dict, batch_prefix: str = "") -> MergeResult:
         """

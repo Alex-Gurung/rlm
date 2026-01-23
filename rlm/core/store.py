@@ -233,6 +233,44 @@ class Store:
             for obj in results
         ]
 
+    def search(self, query: str = "", limit: int = 50) -> list[dict]:
+        """
+        Alias for view() to make store discovery more obvious.
+
+        Args:
+            query: Query string (same syntax as view())
+            limit: Maximum number of results to return
+        """
+        return self.view(query, limit)
+
+    def suggest(self, query: str = "", limit: int = 10) -> dict[str, Any]:
+        """
+        Provide a lightweight search suggestion payload.
+
+        Returns:
+            Dict with:
+              - matches: list of {id, type, description, tags}
+              - types: list of top types by frequency
+              - tags: list of top tags by frequency
+        """
+        matches = self.view(query, limit)
+        type_counts: dict[str, int] = {}
+        tag_counts: dict[str, int] = {}
+
+        for obj in self._objects.values():
+            type_counts[obj.type] = type_counts.get(obj.type, 0) + 1
+            for tag in obj.tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+        top_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "matches": matches,
+            "types": [t for t, _ in top_types],
+            "tags": [t for t, _ in top_tags],
+        }
+
     def llm_map(
         self,
         tasks: list[dict],

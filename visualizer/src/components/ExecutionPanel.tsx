@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CodeBlock } from './CodeBlock';
-import { RLMIteration } from '@/lib/types';
+import { RLMIteration, StoreEvent } from '@/lib/types';
 
 interface ExecutionPanelProps {
   iteration: RLMIteration | null;
@@ -80,6 +80,71 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
   const totalBatchCalls = iterations ? allBatchCalls.length : batchCalls.length;
   const totalCommitEvents = iterations ? allCommitEvents.length : commitEvents.length;
 
+  type StoreNode = {
+    id: string;
+    type: string;
+    description: string;
+    parents: string[];
+    children: string[];
+    ts?: number;
+  };
+
+  const storeTree = useMemo(() => {
+    const nodes = new Map<string, StoreNode>();
+
+    const ensureNode = (id: string) => {
+      if (!nodes.has(id)) {
+        nodes.set(id, {
+          id,
+          type: 'unknown',
+          description: '(missing)',
+          parents: [],
+          children: [],
+        });
+      }
+      return nodes.get(id)!;
+    };
+
+    const addChild = (parentId: string, childId: string) => {
+      const parent = ensureNode(parentId);
+      if (!parent.children.includes(childId)) {
+        parent.children.push(childId);
+      }
+    };
+
+    displayedStoreEvents.forEach((event: StoreEvent) => {
+      if (event.op !== 'create') return;
+      const node = ensureNode(event.id);
+      node.type = event.type || node.type;
+      node.description = event.description || node.description;
+      node.parents = event.parents || [];
+      node.ts = event.ts;
+
+      (event.parents || []).forEach(parentId => {
+        addChild(parentId, event.id);
+      });
+    });
+
+    const roots: StoreNode[] = [];
+    for (const node of nodes.values()) {
+      if (!node.parents || node.parents.length === 0) {
+        roots.push(node);
+      }
+    }
+
+    const sortByTs = (a: StoreNode, b: StoreNode) => (b.ts || 0) - (a.ts || 0);
+    roots.sort(sortByTs);
+    for (const node of nodes.values()) {
+      node.children.sort((a, b) => {
+        const aNode = nodes.get(a);
+        const bNode = nodes.get(b);
+        return (bNode?.ts || 0) - (aNode?.ts || 0);
+      });
+    }
+
+    return { nodes, roots };
+  }, [displayedStoreEvents]);
+
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
       {/* Header */}
@@ -134,7 +199,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
       {/* Tabs - Code Execution and Sub-LM Calls only */}
       <Tabs defaultValue="code" className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-shrink-0 px-4 pt-3">
-          <TabsList className="w-full grid grid-cols-5">
+          <TabsList className="w-full grid grid-cols-6">
             <TabsTrigger value="code" className="text-xs">
               Code Execution
             </TabsTrigger>
@@ -143,6 +208,9 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
             </TabsTrigger>
             <TabsTrigger value="store" className="text-xs">
               Store ({storeEvents.length})
+            </TabsTrigger>
+            <TabsTrigger value="store_tree" className="text-xs">
+              Store Tree
             </TabsTrigger>
             <TabsTrigger value="batch" className="text-xs">
               Batch ({batchCalls.length})
@@ -354,6 +422,49 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
             </ScrollArea>
           </TabsContent>
 
+          <TabsContent value="store_tree" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <ScrollArea className="flex-1 h-full">
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-muted-foreground">
+                    Store hierarchy ({displayedStoreEvents.length} create event{displayedStoreEvents.length !== 1 ? 's' : ''})
+                  </div>
+                  <div className="flex gap-2">
+                    <Badge variant="outline" className="text-[10px]">
+                      Scope: {storeScope}
+                    </Badge>
+                  </div>
+                </div>
+                {storeTree.roots.length > 0 ? (
+                  <div className="space-y-2">
+                    {storeTree.roots.map(root => (
+                      <StoreTreeNode
+                        key={root.id}
+                        nodeId={root.id}
+                        nodes={storeTree.nodes}
+                        depth={0}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <Card className="border-dashed">
+                    <CardContent className="p-8 text-center">
+                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted/30 border border-border flex items-center justify-center">
+                        <span className="text-xl opacity-50">∅</span>
+                      </div>
+                      <p className="text-muted-foreground text-sm">
+                        No store tree data available for this scope
+                      </p>
+                      <p className="text-muted-foreground text-xs mt-1">
+                        Run with store usage to populate events
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
           <TabsContent value="batch" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
               <div className="p-4 space-y-3">
@@ -514,6 +625,48 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
           </TabsContent>
         </div>
       </Tabs>
+    </div>
+  );
+}
+
+function StoreTreeNode({
+  nodeId,
+  nodes,
+  depth,
+}: {
+  nodeId: string;
+  nodes: Map<string, { id: string; type: string; description: string; children: string[] }>;
+  depth: number;
+}) {
+  const node = nodes.get(nodeId);
+  if (!node) return null;
+
+  return (
+    <div className="space-y-1">
+      <div
+        className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2"
+        style={{ marginLeft: depth * 12 }}
+      >
+        <Badge variant="outline" className="text-[10px] font-mono">
+          {node.type}
+        </Badge>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-mono text-muted-foreground">{node.id}</div>
+          <div className="text-xs">{node.description}</div>
+        </div>
+        {node.children.length > 0 && (
+          <Badge variant="outline" className="text-[10px]">
+            {node.children.length}
+          </Badge>
+        )}
+      </div>
+      {node.children.length > 0 && (
+        <div className="space-y-1">
+          {node.children.map(childId => (
+            <StoreTreeNode key={childId} nodeId={childId} nodes={nodes} depth={depth + 1} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
