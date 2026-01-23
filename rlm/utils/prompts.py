@@ -186,3 +186,52 @@ def build_user_prompt(
             prompt += f"\n\nNote: You have {history_count} prior conversation histories available (history_0 through history_{history_count - 1})."
 
     return {"role": "user", "content": prompt}
+
+
+COMMIT_PROTOCOL_PROMPT_ADDON = """
+## Commit Protocol for Structured Analysis
+
+When tasks require workers to return structured findings (evidence, claims, summaries), use the commit protocol for deterministic merging into the global store.
+
+### Using nested workers
+
+```python
+# Spawn a nested RLM worker to analyze a chunk
+commit = rlm_worker(
+    prompt="Find evidence for hypothesis H in this text: " + chunk,
+    store_cards=store.card_view("type=hypothesis"),  # Read-only context
+)
+
+# Merge the worker's commit into the store
+result = apply_commit(commit, batch_prefix="wave0")
+print(f"Created {len(result.created_ids)} objects, success={result.success}")
+```
+
+### Worker output format
+
+Workers return JSON commits:
+```json
+{
+  "commit_id": "worker_chunk_42",
+  "creates": [
+    {"type": "evidence", "id": "e1", "description": "...", "content": {...}}
+  ],
+  "links": [
+    {"type": "supports", "src": "e1", "dst": "hypothesis/H"}
+  ],
+  "proposes_updates": []
+}
+```
+
+### When to use commit protocol vs llm_query
+
+- **llm_query**: Simple questions with text answers
+- **rlm_worker + commit**: Complex analysis producing structured objects for the store
+
+### Store card views
+
+Pass lightweight views to workers (no full content):
+```python
+cards = store.card_view("type=hypothesis")  # [{id, type, description, tags}]
+```
+"""

@@ -39,6 +39,9 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
   const batchCalls = iteration.code_blocks.flatMap(
     block => block.result?.batch_calls || []
   );
+  const commitEvents = iteration.code_blocks.flatMap(
+    block => block.result?.commit_events || []
+  );
   const allStoreEvents = (iterations || []).flatMap(iter =>
     iter.code_blocks.flatMap(block =>
       (block.result?.store_events || []).map(event => ({
@@ -57,13 +60,25 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
       }))
     )
   );
+  const allCommitEvents = (iterations || []).flatMap(iter =>
+    iter.code_blocks.flatMap(block =>
+      (block.result?.commit_events || []).map(event => ({
+        ...event,
+        iteration: iter.iteration,
+        iteration_ts: iter.timestamp,
+      }))
+    )
+  );
 
   const [storeScope, setStoreScope] = useState<'iteration' | 'all'>('iteration');
   const [batchScope, setBatchScope] = useState<'iteration' | 'all'>('iteration');
+  const [commitScope, setCommitScope] = useState<'iteration' | 'all'>('iteration');
   const displayedStoreEvents = storeScope === 'all' ? allStoreEvents : storeEvents;
   const displayedBatchCalls = batchScope === 'all' ? allBatchCalls : batchCalls;
+  const displayedCommitEvents = commitScope === 'all' ? allCommitEvents : commitEvents;
   const totalStoreEvents = iterations ? allStoreEvents.length : storeEvents.length;
   const totalBatchCalls = iterations ? allBatchCalls.length : batchCalls.length;
+  const totalCommitEvents = iterations ? allCommitEvents.length : commitEvents.length;
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-background">
@@ -103,6 +118,11 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
               {batchCalls.length}{iterations ? `/${totalBatchCalls}` : ''} batch call{batchCalls.length !== 1 ? 's' : ''}
             </Badge>
           )}
+          {commitEvents.length > 0 && (
+            <Badge className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30 text-xs">
+              {commitEvents.length}{iterations ? `/${totalCommitEvents}` : ''} commit event{commitEvents.length !== 1 ? 's' : ''}
+            </Badge>
+          )}
           {iteration.final_answer && (
             <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 text-xs">
               Has Final Answer
@@ -114,7 +134,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
       {/* Tabs - Code Execution and Sub-LM Calls only */}
       <Tabs defaultValue="code" className="flex-1 flex flex-col overflow-hidden">
         <div className="flex-shrink-0 px-4 pt-3">
-          <TabsList className="w-full grid grid-cols-4">
+          <TabsList className="w-full grid grid-cols-5">
             <TabsTrigger value="code" className="text-xs">
               Code Execution
             </TabsTrigger>
@@ -126,6 +146,9 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
             </TabsTrigger>
             <TabsTrigger value="batch" className="text-xs">
               Batch ({batchCalls.length})
+            </TabsTrigger>
+            <TabsTrigger value="commit" className="text-xs">
+              Commits ({commitEvents.length})
             </TabsTrigger>
           </TabsList>
         </div>
@@ -400,6 +423,88 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
                       </div>
                       <p className="text-muted-foreground text-sm">
                         No batched calls recorded in this iteration
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="commit" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
+            <ScrollArea className="flex-1 h-full">
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-muted-foreground">
+                    Scope
+                  </div>
+                  <div className="flex gap-2">
+                    <Badge
+                      variant={commitScope === 'iteration' ? 'default' : 'outline'}
+                      className="cursor-pointer text-[10px]"
+                      onClick={() => setCommitScope('iteration')}
+                    >
+                      Iteration
+                    </Badge>
+                    <Badge
+                      variant={commitScope === 'all' ? 'default' : 'outline'}
+                      className="cursor-pointer text-[10px]"
+                      onClick={() => setCommitScope('all')}
+                    >
+                      All
+                    </Badge>
+                  </div>
+                </div>
+                {displayedCommitEvents.length > 0 ? (
+                  displayedCommitEvents.map((event, idx) => (
+                    <Card key={idx} className="border-rose-500/30 bg-rose-500/5 dark:border-rose-400/30 dark:bg-rose-400/5">
+                      <CardHeader className="py-3 px-4">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 dark:bg-rose-400" />
+                            {event.op}
+                          </CardTitle>
+                          <div className="flex gap-2">
+                            <Badge variant="outline" className="text-[10px] font-mono">
+                              {event.commit_id}
+                            </Badge>
+                            {'iteration' in event && (
+                              <Badge variant="outline" className="text-[10px] font-mono">
+                                iter {event.iteration}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="px-4 pb-4 space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            creates {event.creates_count ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            links {event.links_count ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            proposals {event.proposals_count ?? 0}
+                          </Badge>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {event.status ?? 'ok'}
+                          </Badge>
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {new Date(event.ts * 1000).toLocaleString()}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <Card className="border-dashed">
+                    <CardContent className="p-8 text-center">
+                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-muted/30 border border-border flex items-center justify-center">
+                        <span className="text-xl opacity-50">∅</span>
+                      </div>
+                      <p className="text-muted-foreground text-sm">
+                        No commit events recorded in this iteration
                       </p>
                     </CardContent>
                   </Card>

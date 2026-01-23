@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Literal
@@ -87,6 +88,54 @@ class UsageSummary:
 ########################################################
 ########   Types for REPL and RLM Iterations   #########
 ########################################################
+
+
+@dataclass
+class CommitEvent:
+    """Record of a commit merge operation."""
+
+    op: str
+    commit_id: str
+    creates_count: int
+    links_count: int
+    proposals_count: int
+    status: str  # "ok" | "error"
+    errors: list[str]
+    ts: float
+
+    def __init__(
+        self,
+        commit_id: str,
+        op: str = "apply_commit",
+        creates_count: int = 0,
+        links_count: int = 0,
+        proposals_count: int = 0,
+        status: str = "ok",
+        errors: list[str] | None = None,
+        ts: float | None = None,
+    ):
+        self.commit_id = commit_id
+        self.op = op
+        self.creates_count = creates_count
+        self.links_count = links_count
+        self.proposals_count = proposals_count
+        self.status = status
+        self.errors = errors or []
+        self.ts = time.time() if ts is None else ts
+
+    def to_dict(self) -> dict:
+        return {
+            "op": self.op,
+            "commit_id": self.commit_id,
+            "creates_count": self.creates_count,
+            "links_count": self.links_count,
+            "proposals_count": self.proposals_count,
+            "status": self.status,
+            "errors": self.errors,
+            "ts": self.ts,
+        }
+
+
 @dataclass
 class RLMChatCompletion:
     """Record of a single LLM call made from within the environment."""
@@ -126,6 +175,7 @@ class REPLResult:
     llm_calls: list["RLMChatCompletion"]
     store_events: list[dict]
     batch_calls: list[dict]
+    commit_events: list["CommitEvent"]
 
     def __init__(
         self,
@@ -136,6 +186,7 @@ class REPLResult:
         rlm_calls: list["RLMChatCompletion"] = None,
         store_events: list[dict] = None,
         batch_calls: list[dict] = None,
+        commit_events: list["CommitEvent"] = None,
     ):
         self.stdout = stdout
         self.stderr = stderr
@@ -144,9 +195,10 @@ class REPLResult:
         self.rlm_calls = rlm_calls or []
         self.store_events = store_events or []
         self.batch_calls = batch_calls or []
+        self.commit_events = commit_events or []
 
     def __str__(self):
-        return f"REPLResult(stdout={self.stdout}, stderr={self.stderr}, locals={self.locals}, execution_time={self.execution_time}, rlm_calls={len(self.rlm_calls)}, store_events={len(self.store_events)}, batch_calls={len(self.batch_calls)})"
+        return f"REPLResult(stdout={self.stdout}, stderr={self.stderr}, locals={self.locals}, execution_time={self.execution_time}, rlm_calls={len(self.rlm_calls)}, store_events={len(self.store_events)}, batch_calls={len(self.batch_calls)}, commit_events={len(self.commit_events)})"
 
     def to_dict(self):
         return {
@@ -157,6 +209,7 @@ class REPLResult:
             "rlm_calls": [call.to_dict() for call in self.rlm_calls],
             "store_events": self.store_events,
             "batch_calls": self.batch_calls,
+            "commit_events": [event.to_dict() for event in self.commit_events],
         }
 
 

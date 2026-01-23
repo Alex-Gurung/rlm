@@ -169,6 +169,12 @@ class RLM:
             env_kwargs["lm_handler_address"] = (lm_handler.host, lm_handler.port)
             env_kwargs["context_payload"] = prompt
             env_kwargs["depth"] = self.depth + 1  # Environment depth is RLM depth + 1
+            env_kwargs["max_depth"] = self.max_depth
+            # Pass backend config for nested worker spawning
+            env_kwargs["backend"] = self.backend
+            env_kwargs["backend_kwargs"] = self.backend_kwargs
+            # Pass logger for hierarchical logging
+            env_kwargs["logger"] = self.logger
             environment: BaseEnv = get_environment(self.environment_type, env_kwargs)
 
             if self.persistent:

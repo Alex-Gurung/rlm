@@ -38,6 +38,16 @@ export interface BatchCall {
   ts: number;
 }
 
+export interface CommitEvent {
+  op: string;
+  commit_id: string;
+  creates_count?: number;
+  links_count?: number;
+  proposals_count?: number;
+  status?: string;
+  ts: number;
+}
+
 export interface REPLResult {
   stdout: string;
   stderr: string;
@@ -46,6 +56,7 @@ export interface REPLResult {
   rlm_calls: RLMChatCompletion[];
   store_events?: StoreEvent[];
   batch_calls?: BatchCall[];
+  commit_events?: CommitEvent[];
 }
 
 export interface CodeBlock {
@@ -62,6 +73,42 @@ export interface RLMIteration {
   code_blocks: CodeBlock[];
   final_answer: string | [string, string] | null;
   iteration_time: number | null;
+  // Hierarchical run tracking
+  run_id?: string;
+  parent_run_id?: string | null;
+  depth?: number;
+}
+
+// Worker lifecycle events for hierarchical tracking
+export interface WorkerSpawnEvent {
+  type: 'worker_spawn';
+  timestamp: string;
+  run_id: string;
+  child_run_id: string;
+  depth: number;
+  worker_prompt_preview?: string;
+}
+
+export interface WorkerCompleteEvent {
+  type: 'worker_complete';
+  timestamp: string;
+  run_id: string;
+  child_run_id: string;
+  depth: number;
+  result_summary?: string;
+}
+
+// A hierarchical run (root or worker)
+export interface HierarchicalRun {
+  run_id: string;
+  parent_run_id: string | null;
+  depth: number;
+  iterations: RLMIteration[];
+  children: HierarchicalRun[];
+  // Metadata
+  config?: RLMConfigMetadata;
+  workerPromptPreview?: string;
+  resultSummary?: string;
 }
 
 // Metadata saved at the start of a log file about RLM configuration
@@ -74,6 +121,10 @@ export interface RLMConfigMetadata {
   environment_type: string | null;
   environment_kwargs: Record<string, unknown> | null;
   other_backends: string[] | null;
+  // Hierarchical tracking
+  run_id?: string;
+  parent_run_id?: string | null;
+  depth?: number;
 }
 
 export interface RLMLogFile {
@@ -82,6 +133,8 @@ export interface RLMLogFile {
   iterations: RLMIteration[];
   metadata: LogMetadata;
   config: RLMConfigMetadata;
+  // Hierarchical structure (built from flat logs)
+  hierarchicalRuns?: HierarchicalRun;
 }
 
 export interface LogMetadata {
@@ -91,10 +144,14 @@ export interface LogMetadata {
   totalStoreEvents: number;
   totalBatchCalls: number;
   totalBatchPrompts: number;
+  totalCommitEvents: number;
   contextQuestion: string;
   finalAnswer: string | null;
   totalExecutionTime: number;
   hasErrors: boolean;
+  // Hierarchical stats
+  totalRuns: number;
+  maxDepth: number;
 }
 
 export function extractFinalAnswer(answer: string | [string, string] | null): string | null {

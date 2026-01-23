@@ -9,8 +9,10 @@ import { StatsCard } from './StatsCard';
 import { TrajectoryPanel } from './TrajectoryPanel';
 import { ExecutionPanel } from './ExecutionPanel';
 import { IterationTimeline } from './IterationTimeline';
+import { HierarchicalRunsView } from './HierarchicalRunsView';
 import { ThemeToggle } from './ThemeToggle';
-import { RLMLogFile } from '@/lib/types';
+import { RLMLogFile, RLMIteration, HierarchicalRun } from '@/lib/types';
+import { Layers, List } from 'lucide-react';
 
 interface LogViewerProps {
   logFile: RLMLogFile;
@@ -19,7 +21,37 @@ interface LogViewerProps {
 
 export function LogViewer({ logFile, onBack }: LogViewerProps) {
   const [selectedIteration, setSelectedIteration] = useState(0);
-  const { iterations, metadata, config } = logFile;
+  const [selectedRun, setSelectedRun] = useState<HierarchicalRun | null>(null);
+  const [viewMode, setViewMode] = useState<'flat' | 'hierarchical'>('flat');
+  const { iterations, metadata, config, hierarchicalRuns } = logFile;
+
+  // Check if we have hierarchical data
+  const hasHierarchy = hierarchicalRuns && (
+    hierarchicalRuns.children.length > 0 ||
+    (metadata.totalRuns && metadata.totalRuns > 1)
+  );
+
+  // Auto-switch to hierarchical view if hierarchy exists
+  useEffect(() => {
+    if (hasHierarchy) {
+      setViewMode('hierarchical');
+    }
+  }, [hasHierarchy]);
+
+  // Handle iteration selection from hierarchical view
+  const handleHierarchicalSelect = useCallback((iteration: RLMIteration, run: HierarchicalRun) => {
+    // Find the global index of this iteration
+    const globalIndex = iterations.findIndex(
+      i => i.iteration === iteration.iteration && i.run_id === iteration.run_id
+    );
+    if (globalIndex >= 0) {
+      setSelectedIteration(globalIndex);
+    }
+    setSelectedRun(run);
+  }, [iterations]);
+
+  // Get current iteration (considering both flat and hierarchical selection)
+  const currentIteration = iterations[selectedIteration] || null;
 
   const goToPrevious = useCallback(() => {
     setSelectedIteration(prev => Math.max(0, prev - 1));
@@ -148,6 +180,22 @@ export function LogViewer({ logFile, onBack }: LogViewerProps) {
               subtext={`${metadata.totalBatchPrompts} prompts`}
             />
             <StatsCard
+              label="Commits"
+              value={metadata.totalCommitEvents}
+              icon="⇄"
+              variant="magenta"
+              subtext={`${metadata.totalCommitEvents} events`}
+            />
+            {hasHierarchy && (
+              <StatsCard
+                label="Runs"
+                value={metadata.totalRuns || 1}
+                icon="⬡"
+                variant="cyan"
+                subtext={`depth ${metadata.maxDepth || 0}`}
+              />
+            )}
+            <StatsCard
               label="Exec"
               value={`${metadata.totalExecutionTime.toFixed(2)}s`}
               icon="⏱"
@@ -157,12 +205,55 @@ export function LogViewer({ logFile, onBack }: LogViewerProps) {
         </div>
       </div>
 
-      {/* Iteration Timeline - Full width scrollable row */}
-      <IterationTimeline
-        iterations={iterations}
-        selectedIteration={selectedIteration}
-        onSelectIteration={setSelectedIteration}
-      />
+      {/* Iteration Timeline / Hierarchical View */}
+      <div className="border-b border-border">
+        {/* View mode toggle (only show if hierarchy exists) */}
+        {hasHierarchy && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-muted/20 border-b border-border">
+            <span className="text-xs text-muted-foreground">View:</span>
+            <Button
+              variant={viewMode === 'flat' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-6 text-xs px-2"
+              onClick={() => setViewMode('flat')}
+            >
+              <List className="w-3 h-3 mr-1" />
+              Flat
+            </Button>
+            <Button
+              variant={viewMode === 'hierarchical' ? 'secondary' : 'ghost'}
+              size="sm"
+              className="h-6 text-xs px-2"
+              onClick={() => setViewMode('hierarchical')}
+            >
+              <Layers className="w-3 h-3 mr-1" />
+              Hierarchical
+            </Button>
+            {selectedRun && viewMode === 'hierarchical' && (
+              <Badge variant="outline" className="text-[9px] ml-2">
+                Viewing: {selectedRun.run_id.slice(0, 8)} (depth {selectedRun.depth})
+              </Badge>
+            )}
+          </div>
+        )}
+
+        {/* Show appropriate view based on mode */}
+        {viewMode === 'hierarchical' && hierarchicalRuns ? (
+          <div className="max-h-48 overflow-y-auto px-4 py-2">
+            <HierarchicalRunsView
+              rootRun={hierarchicalRuns}
+              onSelectIteration={handleHierarchicalSelect}
+              selectedIteration={currentIteration}
+            />
+          </div>
+        ) : (
+          <IterationTimeline
+            iterations={iterations}
+            selectedIteration={selectedIteration}
+            onSelectIteration={setSelectedIteration}
+          />
+        )}
+      </div>
 
       {/* Main Content - Resizable Split View */}
       <div className="flex-1 min-h-0">

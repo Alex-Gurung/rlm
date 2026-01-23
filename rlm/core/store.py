@@ -2,12 +2,17 @@
 Store module for hierarchical understanding, provenance/backrefs, and hyper-parallel map-style subcalls.
 """
 
+from __future__ import annotations
+
 import json
 import shlex
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from rlm.core.commit import Commit, MergeResult
 
 
 @dataclass
@@ -289,6 +294,39 @@ class Store:
             )
 
         return batch_id
+
+    def card_view(self, query: str = "", limit: int = 20) -> list[dict]:
+        """
+        Return lightweight cards for objects matching the query.
+
+        Cards are suitable for passing to sub-LLM workers as context,
+        containing only essential metadata without full content.
+
+        Args:
+            query: Query string (same syntax as view())
+            limit: Maximum number of cards to return
+
+        Returns:
+            List of dicts: [{id, type, description, tags}]
+        """
+        return self.view(query, limit)
+
+    def apply_commit(self, commit: "Commit", batch_prefix: str = "") -> "MergeResult":
+        """
+        Merge a worker commit into the store.
+
+        This is a convenience wrapper around commit.apply_commit().
+
+        Args:
+            commit: The Commit object to merge
+            batch_prefix: Optional prefix for namespacing created objects
+
+        Returns:
+            MergeResult with created IDs and any errors
+        """
+        from rlm.core.commit import apply_commit
+
+        return apply_commit(self, commit, batch_prefix)
 
     @staticmethod
     def _validate_json_serializable(content: Any) -> None:
