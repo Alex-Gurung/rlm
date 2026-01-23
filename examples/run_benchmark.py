@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Benchmark comparing RLM baseline vs store-enabled mode.
+Benchmark comparing RLM baseline (store_mode='none') vs shared store mode (store_mode='shared').
 
 Usage:
-    uv run python examples/run_benchmark.py
-    uv run python examples/run_benchmark.py --num-facts 50
-    uv run python examples/run_benchmark.py --store-only
+    python examples/run_benchmark.py
+    python examples/run_benchmark.py --num-facts 50
+    python examples/run_benchmark.py --store-only
+    python examples/run_benchmark.py --model "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8"
 """
 
 import argparse
@@ -107,8 +108,35 @@ def generate_task(n: int = 20, seed: int = None) -> tuple[str, set[int], str]:
 
 
 def extract_fact_numbers(answer: str) -> set[int]:
-    """Extract fact numbers from answer text."""
+    """Extract fact numbers from answer text.
+
+    Prioritizes FINAL_VAR/FINAL patterns, then looks for explicit answer lines.
+    Falls back to extracting all numbers only if no structured answer found.
+    """
     import re
+
+    # First, look for FINAL_VAR(...) or FINAL(...) patterns
+    final_match = re.search(r'FINAL(?:_VAR)?\(([^)]+)\)', answer)
+    if final_match:
+        content = final_match.group(1)
+        numbers = re.findall(r'\b(\d+)\b', content)
+        return {int(n) for n in numbers if 1 <= int(n) <= 100}
+
+    # Look for explicit answer lines like "Thus, the fact numbers are: 1, 4, 8, 9."
+    answer_patterns = [
+        r'fact numbers[^:]*:\s*([\d,\s]+)',
+        r'facts describing[^:]*:\s*([\d,\s]+)',
+        r'answer[^:]*:\s*([\d,\s]+)',
+    ]
+    for pattern in answer_patterns:
+        match = re.search(pattern, answer, re.IGNORECASE)
+        if match:
+            content = match.group(1)
+            numbers = re.findall(r'\b(\d+)\b', content)
+            if numbers:
+                return {int(n) for n in numbers if 1 <= int(n) <= 100}
+
+    # Fallback: extract all numbers (original behavior)
     numbers = re.findall(r'\b(\d+)\b', answer)
     return {int(n) for n in numbers if 1 <= int(n) <= 100}
 
@@ -139,17 +167,21 @@ def parse_log_metrics(log_dir: str) -> dict:
 def run_single(
     backend: str,
     backend_kwargs: dict,
-    store_prompt: bool,
-    context: str,
+    store_mode: str,
+    context: str | dict,
     question: str,
     correct_facts: set[int],
     log_base: str,
 ) -> BenchmarkResult:
-    """Run a single benchmark configuration."""
+    """Run a single benchmark configuration.
+
+    Args:
+        context: Either a string (single context) or dict (file-based context)
+    """
     from rlm import RLM
     from rlm.logger import RLMLogger
 
-    name = "store" if store_prompt else "baseline"
+    name = "shared" if store_mode == "shared" else "baseline"
     log_dir = f"{log_base}/{name}_{int(time.time())}"
     Path(log_dir).mkdir(parents=True, exist_ok=True)
 
@@ -163,13 +195,11 @@ def run_single(
         max_iterations=10,
         logger=logger,
         verbose=True,
-        store_prompt=store_prompt,
+        store_mode=store_mode,
     )
 
-    prompt = f"{context}\n\n---\n\nQuestion: {question}"
-
     start = time.perf_counter()
-    result = rlm.completion(prompt)
+    result = rlm.completion(context, root_prompt=question)
     wall_time = time.perf_counter() - start
 
     metrics = parse_log_metrics(log_dir)
@@ -252,6 +282,45 @@ def print_results(results: list[BenchmarkResult], correct_facts: set[int]):
     print("=" * 80)
 
 
+def llm_judge_score(answer: str, correct_facts: set[int], judge_client) -> dict:
+    """Use LLM-as-a-judge to evaluate the answer quality.
+
+    Returns dict with:
+        - score: 0-10 rating
+        - correct_identified: list of correctly identified facts
+        - false_positives: list of incorrectly identified facts
+        - reasoning: judge's explanation
+    """
+    prompt = f"""You are evaluating an AI's answer to the question: "Which facts describe projects led by women?"
+
+The CORRECT answer is: Facts {sorted(correct_facts)}
+
+The AI's answer was:
+{answer}
+
+Please evaluate:
+1. Which correct facts did the AI identify? (should be from {sorted(correct_facts)})
+2. Which facts did the AI incorrectly identify as led by women (false positives)?
+3. Overall score from 0-10 (10 = perfect, identified all correct facts with no false positives)
+
+Respond in JSON format:
+{{"score": <0-10>, "correct_identified": [<list of fact numbers>], "false_positives": [<list of fact numbers>], "reasoning": "<brief explanation>"}}
+"""
+    response = judge_client.completion([{"role": "user", "content": prompt}])
+
+    # Parse JSON from response
+    import re
+    json_match = re.search(r'\{[^{}]*\}', response, re.DOTALL)
+    if json_match:
+        try:
+            return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback if parsing fails
+    return {"score": -1, "correct_identified": [], "false_positives": [], "reasoning": "Failed to parse judge response"}
+
+
 def main():
     parser = argparse.ArgumentParser(description="RLM Store Benchmark")
     parser.add_argument("--backend", default="vllm")
@@ -262,13 +331,36 @@ def main():
     parser.add_argument("--log-dir", default="./logs")
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument("--store-only", action="store_true")
+    parser.add_argument("--use-files", action="store_true", help="Load context as chunked files instead of single string")
+    parser.add_argument("--chunk-size", type=int, default=5, help="Facts per chunk when using --use-files")
+    parser.add_argument("--judge", action="store_true", help="Use LLM-as-a-judge for evaluation")
+    parser.add_argument("--judge-model", default=None, help="Model for LLM judge (defaults to same as --model)")
+    parser.add_argument("--judge-backend", default=None, help="Backend for LLM judge (defaults to same as --backend)")
     args = parser.parse_args()
 
     # Generate task
     print(f"Generating {args.num_facts} facts (seed={args.seed})...")
-    context, correct_facts, question = generate_task(args.num_facts, args.seed)
+    context_str, correct_facts, question = generate_task(args.num_facts, args.seed)
     print(f"Correct answers: Facts {sorted(correct_facts)}")
     print(f"Question: {question}\n")
+
+    # Convert to file-based context if requested
+    if args.use_files:
+        facts = context_str.strip().split('\n')
+        chunk_size = args.chunk_size
+        context = {}
+        for i in range(0, len(facts), chunk_size):
+            chunk_facts = facts[i:i + chunk_size]
+            chunk_name = f"chunk_{i // chunk_size + 1}.txt"
+            context[chunk_name] = '\n'.join(chunk_facts)
+        context["metadata.json"] = {
+            "total_facts": len(facts),
+            "chunks": len(context) - 1,
+            "task": "Find facts describing projects led by women"
+        }
+        print(f"Using file-based context: {list(context.keys())}\n")
+    else:
+        context = context_str
 
     # Setup backend
     backend_kwargs = {"model_name": args.model}
@@ -278,30 +370,67 @@ def main():
     elif args.backend == "openai":
         backend_kwargs["api_key"] = os.getenv("OPENAI_API_KEY")
 
+    # Setup judge client if requested
+    judge_client = None
+    if args.judge:
+        from rlm.clients import get_client
+        judge_backend = args.judge_backend or args.backend
+        judge_model = args.judge_model or args.model
+        judge_kwargs = {"model_name": judge_model}
+        if judge_backend == "vllm":
+            judge_kwargs["base_url"] = args.base_url or os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+            judge_kwargs["api_key"] = os.getenv("VLLM_API_KEY", "dummy")
+        elif judge_backend == "openai":
+            judge_kwargs["api_key"] = os.getenv("OPENAI_API_KEY")
+        judge_client = get_client(judge_backend, judge_kwargs)
+        print(f"Using LLM judge: {judge_model}\n")
+
     results = []
 
-    # Run baseline
+    # Run baseline (store_mode="none")
     if not args.store_only:
         print("\n" + "=" * 60)
-        print("Running BASELINE (store_prompt=False)")
+        print("Running BASELINE (store_mode='none')")
         print("=" * 60)
         results.append(run_single(
-            args.backend, backend_kwargs, False,
+            args.backend, backend_kwargs, "none",
             context, question, correct_facts, args.log_dir
         ))
 
-    # Run store-enabled
+    # Run shared store mode (store_mode="shared")
     if not args.baseline_only:
         print("\n" + "=" * 60)
-        print("Running STORE-ENABLED (store_prompt=True)")
+        print("Running SHARED STORE (store_mode='shared')")
         print("=" * 60)
         results.append(run_single(
-            args.backend, backend_kwargs, True,
+            args.backend, backend_kwargs, "shared",
             context, question, correct_facts, args.log_dir
         ))
+
+    # LLM-as-a-judge evaluation
+    judge_scores = {}
+    if judge_client and results:
+        print("\n" + "=" * 60)
+        print("Running LLM-as-a-Judge Evaluation")
+        print("=" * 60)
+        for r in results:
+            print(f"\nJudging {r.name}...")
+            score = llm_judge_score(r.answer, correct_facts, judge_client)
+            judge_scores[r.name] = score
+            print(f"  Score: {score['score']}/10")
+            print(f"  Correct identified: {score['correct_identified']}")
+            print(f"  False positives: {score['false_positives']}")
+            print(f"  Reasoning: {score['reasoning']}")
 
     # Print comparison
     print_results(results, correct_facts)
+
+    # Print judge summary if available
+    if judge_scores:
+        print("\nLLM JUDGE SUMMARY:")
+        print("-" * 40)
+        for name, score in judge_scores.items():
+            print(f"  {name.upper()}: {score['score']}/10")
 
 
 if __name__ == "__main__":

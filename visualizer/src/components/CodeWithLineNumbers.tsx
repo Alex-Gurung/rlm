@@ -17,7 +17,7 @@ export function CodeWithLineNumbers({
   const lineNumberWidth = Math.max(2, String(lines.length + startLine - 1).length);
   
   return (
-    <div className="flex">
+    <div className="flex min-w-0 w-full">
       {/* Line numbers */}
       <div className="flex-shrink-0 pr-4 border-r border-border/30 select-none">
         {lines.map((_, idx) => (
@@ -32,10 +32,9 @@ export function CodeWithLineNumbers({
       </div>
       
       {/* Code */}
-      <div className="flex-1 pl-4 overflow-x-auto">
+      <div className="flex-1 min-w-0 pl-4 overflow-x-auto">
         <SyntaxHighlight code={code} language={language} />
       </div>
     </div>
   );
 }
-

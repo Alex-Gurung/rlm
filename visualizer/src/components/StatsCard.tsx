@@ -9,6 +9,7 @@ interface StatsCardProps {
   icon: React.ReactNode;
   variant?: 'cyan' | 'magenta' | 'yellow' | 'green' | 'red';
   subtext?: string;
+  size?: 'default' | 'compact';
 }
 
 const variantStyles = {
@@ -27,26 +28,27 @@ const textStyles = {
   red: 'text-red-600 dark:text-red-400',
 };
 
-export function StatsCard({ label, value, icon, variant = 'cyan', subtext }: StatsCardProps) {
+export function StatsCard({ label, value, icon, variant = 'cyan', subtext, size = 'default' }: StatsCardProps) {
+  const compact = size === 'compact';
   return (
     <Card className={cn(
       'border transition-all duration-300 hover:scale-[1.02]',
       variantStyles[variant]
     )}>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3">
-          <div className={cn('text-2xl', textStyles[variant])}>
+      <CardContent className={compact ? 'p-2' : 'p-4'}>
+        <div className={cn('flex items-center', compact ? 'gap-2' : 'gap-3')}>
+          <div className={cn(compact ? 'text-lg' : 'text-2xl', textStyles[variant])}>
             {icon}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
+            <p className={cn('uppercase tracking-wider text-muted-foreground font-medium', compact ? 'text-[9px]' : 'text-xs')}>
               {label}
             </p>
-            <p className={cn('text-2xl font-bold tracking-tight', textStyles[variant])}>
+            <p className={cn(compact ? 'text-lg' : 'text-2xl', 'font-bold tracking-tight', textStyles[variant])}>
               {value}
             </p>
             {subtext && (
-              <p className="text-xs text-muted-foreground mt-0.5 truncate">
+              <p className={cn(compact ? 'text-[9px]' : 'text-xs', 'text-muted-foreground mt-0.5 truncate')}>
                 {subtext}
               </p>
             )}

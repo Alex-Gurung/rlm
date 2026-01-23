@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CodeBlock } from './CodeBlock';
 import { RLMIteration, StoreEvent } from '@/lib/types';
@@ -146,7 +146,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
   }, [displayedStoreEvents]);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-background">
+    <div className="h-full min-w-0 flex flex-col overflow-hidden bg-background">
       {/* Header */}
       <div className="flex-shrink-0 p-4 border-b border-border bg-muted/30">
         <div className="flex items-center justify-between mb-3">
@@ -224,6 +224,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
         <div className="flex-1 overflow-hidden">
           <TabsContent value="code" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-4">
                 {iteration.code_blocks.length > 0 ? (
                   iteration.code_blocks.map((block, idx) => (
@@ -250,6 +251,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
 
           <TabsContent value="sublm" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-4">
                 {totalSubCalls > 0 ? (
                   iteration.code_blocks.flatMap((block, blockIdx) =>
@@ -334,6 +336,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
 
           <TabsContent value="store" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-muted-foreground">
@@ -424,6 +427,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
 
           <TabsContent value="store_tree" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-muted-foreground">
@@ -467,6 +471,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
 
           <TabsContent value="batch" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-muted-foreground">
@@ -544,6 +549,7 @@ export function ExecutionPanel({ iteration, iterations }: ExecutionPanelProps) {
 
           <TabsContent value="commit" className="h-full m-0 data-[state=active]:flex data-[state=active]:flex-col">
             <ScrollArea className="flex-1 h-full">
+              <ScrollBar orientation="horizontal" />
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-muted-foreground">

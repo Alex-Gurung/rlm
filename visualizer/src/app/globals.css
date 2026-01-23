@@ -123,6 +123,8 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-size: 15px;
+    line-height: 1.5;
   }
 }
 
@@ -149,7 +151,7 @@
 /* Code block styling */
 .code-block {
   font-family: var(--font-geist-mono), 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   tab-size: 2;
 }

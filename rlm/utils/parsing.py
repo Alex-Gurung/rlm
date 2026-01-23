@@ -52,11 +52,19 @@ def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | 
     if match:
         variable_name = match.group(1).strip().strip('"').strip("'")
         if environment is not None:
-            result = environment.execute_code(f"print(FINAL_VAR({variable_name!r}))")
-            final_answer = result.stdout.strip()
-            if final_answer == "":
-                final_answer = result.stderr.strip() or ""
-            return final_answer
+            # FINAL_VAR prints FINAL(value) to stdout - we just need to call it
+            result = environment.execute_code(f"FINAL_VAR({variable_name!r})")
+            # Parse the FINAL(...) pattern from stdout
+            stdout = result.stdout.strip()
+            final_match = re.search(r"FINAL\((.+)\)", stdout, re.DOTALL)
+            if final_match:
+                return final_match.group(1).strip()
+            # Fallback to raw stdout if FINAL pattern not found
+            if stdout:
+                return stdout
+            if result.stderr.strip():
+                return result.stderr.strip()
+            return ""
         return None
 
     # Check for FINAL pattern - greedy match to handle nested parens

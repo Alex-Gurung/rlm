@@ -227,6 +227,8 @@ class LocalREPL(NonIsolatedEnv):
         self.globals["llm_query"] = self._llm_query
         self.globals["llm_query_batched"] = self._llm_query_batched
         self.globals["parse_json"] = self.parse_json
+        self.globals["list_files"] = self._list_files
+        self.globals["read_file"] = self._read_file
 
         # Create store for hierarchical data management (only when store_mode="shared")
         if self._store_mode == "shared":
@@ -254,12 +256,28 @@ class LocalREPL(NonIsolatedEnv):
             # store_mode="none" - no store exposed (benchmark mode)
             self.store = None
 
-    def _final_var(self, variable_name: str) -> str:
-        """Return the value of a variable as a final answer."""
-        variable_name = variable_name.strip().strip("\"'")
-        if variable_name in self.locals:
-            return str(self.locals[variable_name])
-        return f"Error: Variable '{variable_name}' not found"
+    def _final_var(self, variable_name_or_value: str) -> str:
+        """Return a final answer, either by variable name or direct value.
+
+        Handles two cases:
+        1. FINAL_VAR("result") - looks up variable named "result" in locals
+        2. FINAL_VAR(result) - if result='answer', uses 'answer' directly
+
+        Prints FINAL(value) to stdout so the parser can detect it,
+        even when called inside code blocks.
+        """
+        arg = str(variable_name_or_value).strip().strip("\"'")
+
+        # First, check if it's a variable name in locals
+        if arg in self.locals:
+            value = str(self.locals[arg])
+            print(f"FINAL({value})")
+            return value
+
+        # Otherwise, treat the argument itself as the final answer
+        # This handles FINAL_VAR(result) where result='1,2,5,10'
+        print(f"FINAL({arg})")
+        return arg
 
     def _final(self, answer: str) -> str:
         """Return the answer directly (allows FINAL() in code blocks).
@@ -280,6 +298,37 @@ class LocalREPL(NonIsolatedEnv):
             if cleaned.lower().startswith("json"):
                 cleaned = cleaned[4:].strip()
         return json.loads(cleaned)
+
+    def _list_files(self) -> list[str]:
+        """List all context files available in the working directory.
+
+        Returns a list of filenames (not full paths) that can be read with read_file().
+        """
+        files = []
+        for f in os.listdir(self.temp_dir):
+            # Include text and json files, exclude hidden files
+            if not f.startswith(".") and (f.endswith(".txt") or f.endswith(".json")):
+                files.append(f)
+        return sorted(files)
+
+    def _read_file(self, filename: str) -> str:
+        """Read the contents of a context file.
+
+        Args:
+            filename: The name of the file (e.g., 'chunk_1.txt')
+
+        Returns:
+            The file contents as a string (JSON files are returned as formatted JSON string)
+        """
+        # Security: only allow reading from temp_dir
+        filepath = os.path.join(self.temp_dir, os.path.basename(filename))
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"File not found: {filename}")
+
+        with open(filepath, "r") as f:
+            content = f.read()
+
+        return content
 
     def _rlm_worker(
         self,
@@ -391,6 +440,7 @@ class LocalREPL(NonIsolatedEnv):
                 other_backend_kwargs=self._worker_other_backend_kwargs,
                 verbose=False,
                 logger=child_logger,  # Pass child logger for hierarchical logging
+                task_name=worker_config.get("task_name"),
             )
 
             # Execute with timeout (via max_iterations limit)
@@ -565,8 +615,59 @@ class LocalREPL(NonIsolatedEnv):
             return [f"Error: LM query failed - {e}"] * len(prompts)
 
     def load_context(self, context_payload: dict | list | str):
-        """Load context into the environment as context_0 (and 'context' alias)."""
+        """Load context into the environment.
+
+        If context_payload is a dict with string keys that look like filenames (contain '.'),
+        it's treated as a files dict and loaded via load_files().
+        Otherwise, it's loaded as context_0 (and 'context' alias).
+        """
+        # Check if this looks like a files dict (keys are filenames)
+        if isinstance(context_payload, dict):
+            keys = list(context_payload.keys())
+            if keys and all(isinstance(k, str) and "." in k for k in keys):
+                # Treat as files dict
+                self.load_files(context_payload)
+                return
+
+        # Default behavior: load as single context
         self.add_context(context_payload, 0)
+
+    def load_files(self, files: dict[str, str | dict | list]):
+        """Load multiple files into the environment.
+
+        Each key becomes a filename, each value becomes the file content.
+        Files are accessible via list_files() and read_file().
+
+        Args:
+            files: Dict mapping filename -> content (string or JSON-serializable)
+
+        Example:
+            load_files({
+                "chunk_1.txt": "Fact 1: ... Fact 5: ...",
+                "chunk_2.txt": "Fact 6: ... Fact 10: ...",
+                "metadata.json": {"total_facts": 20, "source": "benchmark"}
+            })
+        """
+        for filename, content in files.items():
+            # Sanitize filename
+            safe_name = os.path.basename(filename)
+            if not safe_name:
+                continue
+
+            filepath = os.path.join(self.temp_dir, safe_name)
+
+            if isinstance(content, str):
+                with open(filepath, "w") as f:
+                    f.write(content)
+            else:
+                # JSON-serialize dicts/lists
+                with open(filepath, "w") as f:
+                    json.dump(content, f, indent=2)
+
+        # Also set 'context' to be a summary of available files for convenience
+        file_list = self._list_files()
+        self.locals["context"] = f"Files available: {file_list}. Use list_files() and read_file(name) to access."
+        self._context_count = len(files)
 
     def add_context(
         self, context_payload: dict | list | str, context_index: int | None = None

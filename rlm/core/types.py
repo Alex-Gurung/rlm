@@ -250,6 +250,8 @@ class RLMMetadata:
     """Metadata about the RLM configuration."""
 
     root_model: str
+    task_name: str | None
+    store_mode: str | None
     max_depth: int
     max_iterations: int
     backend: str
@@ -261,6 +263,8 @@ class RLMMetadata:
     def to_dict(self):
         return {
             "root_model": self.root_model,
+            "task_name": self.task_name,
+            "store_mode": self.store_mode,
             "max_depth": self.max_depth,
             "max_iterations": self.max_iterations,
             "backend": self.backend,

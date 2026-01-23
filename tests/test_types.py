@@ -172,6 +172,8 @@ class TestRLMMetadata:
     def test_to_dict(self):
         meta = RLMMetadata(
             root_model="gpt-4",
+            task_name="test_task",
+            store_mode="shared",
             max_depth=2,
             max_iterations=10,
             backend="openai",
@@ -183,3 +185,5 @@ class TestRLMMetadata:
         assert d["root_model"] == "gpt-4"
         assert d["max_depth"] == 2
         assert d["backend"] == "openai"
+        assert d["task_name"] == "test_task"
+        assert d["store_mode"] == "shared"

@@ -54,6 +54,7 @@ class RLM:
         verbose: bool = False,
         persistent: bool = False,
         store_mode: str = "shared",
+        task_name: str | None = None,
     ):
         """
         Args:
@@ -71,6 +72,7 @@ class RLM:
             verbose: Whether to print verbose output in rich to console.
             persistent: If True, reuse the environment across completion() calls for multi-turn conversations.
             store_mode: "shared" (default) uses SharedStore with full prompt, "none" disables store for benchmarking.
+            task_name: Optional task name for logging/visualization.
         """
         # Store config for spawning per-completion
         self.backend = backend
@@ -94,6 +96,7 @@ class RLM:
         self.max_depth = max_depth
         self.max_iterations = max_iterations
         self.store_mode = store_mode
+        self.task_name = task_name
 
         # Build system prompt with optional addons
         base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
@@ -122,6 +125,8 @@ class RLM:
                 root_model=backend_kwargs.get("model_name", "unknown")
                 if backend_kwargs
                 else "unknown",
+                task_name=task_name,
+                store_mode=store_mode,
                 max_depth=max_depth,
                 max_iterations=max_iterations,
                 backend=backend,

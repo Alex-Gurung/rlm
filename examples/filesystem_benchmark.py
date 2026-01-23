@@ -296,6 +296,7 @@ def run_benchmark(
         logger=logger,
         verbose=True,
         store_mode="shared" if store_prompt else "none",
+        task_name=f"filesystem_benchmark/{name}",
     )
 
     root_prompt = build_root_prompt(tasks, store_enabled=store_prompt)
@@ -318,6 +319,7 @@ def run_benchmark(
             logger=retry_logger,
             verbose=True,
             store_mode="shared" if store_prompt else "none",
+            task_name=f"filesystem_benchmark/{name}",
         )
         retry_prompt = (
             root_prompt

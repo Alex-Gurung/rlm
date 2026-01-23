@@ -1,7 +1,6 @@
 'use client';
 
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { RLMIteration, extractFinalAnswer } from '@/lib/types';
 
@@ -101,10 +100,9 @@ export function TrajectoryPanel({
         </div>
       </div>
 
-      {/* Content - with explicit height constraint for scrolling */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ScrollArea className="h-full">
-          <div className="p-4 space-y-4">
+      {/* Content - scroll container */}
+      <div className="flex-1 min-h-0 min-w-0 overflow-auto">
+        <div className="p-4 space-y-4">
             {/* Prompt messages */}
             {currentIteration?.prompt.map((msg, idx) => (
               <div 
@@ -202,9 +200,8 @@ export function TrajectoryPanel({
             )}
             
             {/* Bottom padding for scroll */}
-            <div className="h-4" />
-          </div>
-        </ScrollArea>
+          <div className="h-4" />
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,11 @@ export function extractContextVariable(iterations: RLMIteration[]): string | nul
         if (typeof ctx === 'string') {
           return ctx;
         }
+        try {
+          return JSON.stringify(ctx, null, 2);
+        } catch (e) {
+          return String(ctx);
+        }
       }
     }
   }
@@ -19,6 +24,8 @@ export function extractContextVariable(iterations: RLMIteration[]): string | nul
 function getDefaultConfig(): RLMConfigMetadata {
   return {
     root_model: null,
+    task_name: null,
+    store_mode: null,
     max_depth: null,
     max_iterations: null,
     backend: null,
@@ -54,6 +61,8 @@ export function parseJSONL(content: string): ParsedJSONL {
       if (parsed.type === 'metadata') {
         const parsedConfig: RLMConfigMetadata = {
           root_model: parsed.root_model ?? null,
+          task_name: parsed.task_name ?? null,
+          store_mode: parsed.store_mode ?? null,
           max_depth: parsed.max_depth ?? null,
           max_iterations: parsed.max_iterations ?? null,
           backend: parsed.backend ?? null,

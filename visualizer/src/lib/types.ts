@@ -114,6 +114,8 @@ export interface HierarchicalRun {
 // Metadata saved at the start of a log file about RLM configuration
 export interface RLMConfigMetadata {
   root_model: string | null;
+  task_name?: string | null;
+  store_mode?: string | null;
   max_depth: number | null;
   max_iterations: number | null;
   backend: string | null;
