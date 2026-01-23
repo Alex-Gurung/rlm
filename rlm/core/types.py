@@ -124,6 +124,8 @@ class REPLResult:
     locals: dict
     execution_time: float
     llm_calls: list["RLMChatCompletion"]
+    store_events: list[dict]
+    batch_calls: list[dict]
 
     def __init__(
         self,
@@ -132,15 +134,19 @@ class REPLResult:
         locals: dict,
         execution_time: float = None,
         rlm_calls: list["RLMChatCompletion"] = None,
+        store_events: list[dict] = None,
+        batch_calls: list[dict] = None,
     ):
         self.stdout = stdout
         self.stderr = stderr
         self.locals = locals
         self.execution_time = execution_time
         self.rlm_calls = rlm_calls or []
+        self.store_events = store_events or []
+        self.batch_calls = batch_calls or []
 
     def __str__(self):
-        return f"REPLResult(stdout={self.stdout}, stderr={self.stderr}, locals={self.locals}, execution_time={self.execution_time}, rlm_calls={len(self.rlm_calls)})"
+        return f"REPLResult(stdout={self.stdout}, stderr={self.stderr}, locals={self.locals}, execution_time={self.execution_time}, rlm_calls={len(self.rlm_calls)}, store_events={len(self.store_events)}, batch_calls={len(self.batch_calls)})"
 
     def to_dict(self):
         return {
@@ -149,6 +155,8 @@ class REPLResult:
             "locals": {k: _serialize_value(v) for k, v in self.locals.items()},
             "execution_time": self.execution_time,
             "rlm_calls": [call.to_dict() for call in self.rlm_calls],
+            "store_events": self.store_events,
+            "batch_calls": self.batch_calls,
         }
 
 

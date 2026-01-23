@@ -1,5 +1,5 @@
 .PHONY: help install install-dev install-modal run-all \
-        quickstart docker-repl lm-repl modal-repl \
+        quickstart docker-repl lm-repl modal-repl store-benchmark \
         lint format test check
 
 help:
@@ -16,6 +16,7 @@ help:
 	@echo "  make docker-repl    - Run docker_repl_example.py (needs Docker)"
 	@echo "  make lm-repl        - Run lm_in_repl.py (needs PORTKEY_API_KEY)"
 	@echo "  make modal-repl     - Run modal_repl_example.py (needs Modal)"
+	@echo "  make store-benchmark - Run store_benchmark.py (needs vLLM)"
 	@echo ""
 	@echo "Development:"
 	@echo "  make lint           - Run ruff linter"
@@ -45,6 +46,9 @@ lm-repl: install
 
 modal-repl: install-modal
 	uv run python -m examples.modal_repl_example
+
+store-benchmark: install
+	uv run python -m examples.store_benchmark
 
 lint: install-dev
 	uv run ruff check .

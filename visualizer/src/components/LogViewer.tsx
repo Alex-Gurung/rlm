@@ -134,6 +134,20 @@ export function LogViewer({ logFile, onBack }: LogViewerProps) {
               variant="magenta"
             />
             <StatsCard
+              label="Store"
+              value={metadata.totalStoreEvents}
+              icon="▦"
+              variant="cyan"
+              subtext={`${metadata.totalStoreEvents} events`}
+            />
+            <StatsCard
+              label="Batch"
+              value={metadata.totalBatchCalls}
+              icon="⇉"
+              variant="yellow"
+              subtext={`${metadata.totalBatchPrompts} prompts`}
+            />
+            <StatsCard
               label="Exec"
               value={`${metadata.totalExecutionTime.toFixed(2)}s`}
               icon="⏱"
@@ -171,6 +185,7 @@ export function LogViewer({ logFile, onBack }: LogViewerProps) {
             <div className="h-full bg-background">
               <ExecutionPanel
                 iteration={iterations[selectedIteration] || null}
+                iterations={iterations}
               />
             </div>
           </ResizablePanel>

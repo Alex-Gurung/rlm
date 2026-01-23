@@ -156,11 +156,18 @@ export function CodeBlock({ block, index }: CodeBlockProps) {
                         <Badge className="bg-fuchsia-500 text-white dark:bg-fuchsia-400 dark:text-fuchsia-950 text-xs">
                           llm_query #{i + 1}
                         </Badge>
-                        <div className="flex gap-2 text-xs text-muted-foreground">
-                          <span>{call.prompt_tokens} prompt</span>
-                          <span>•</span>
-                          <span>{call.completion_tokens} completion</span>
-                        </div>
+                        {(() => {
+                          const usage = call.usage_summary?.model_usage_summaries?.[call.root_model ?? ''];
+                          const inputTokens = call.prompt_tokens ?? usage?.total_input_tokens;
+                          const outputTokens = call.completion_tokens ?? usage?.total_output_tokens;
+                          return (
+                            <div className="flex gap-2 text-xs text-muted-foreground">
+                              <span>{inputTokens != null ? `${inputTokens} prompt` : 'n/a prompt'}</span>
+                              <span>•</span>
+                              <span>{outputTokens != null ? `${outputTokens} completion` : 'n/a completion'}</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="text-xs text-muted-foreground mb-1">Prompt:</div>
                       <div className="text-sm bg-muted rounded p-2 mb-2 max-h-24 overflow-y-auto border border-border">

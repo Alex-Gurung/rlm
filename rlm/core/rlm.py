@@ -22,6 +22,7 @@ from rlm.utils.parsing import (
 )
 from rlm.utils.prompts import (
     RLM_SYSTEM_PROMPT,
+    SMALL_MODEL_PROMPT_ADDON,
     QueryMetadata,
     build_rlm_system_prompt,
     build_user_prompt,
@@ -52,6 +53,7 @@ class RLM:
         logger: RLMLogger | None = None,
         verbose: bool = False,
         persistent: bool = False,
+        store_prompt: bool = False,
     ):
         """
         Args:
@@ -68,6 +70,7 @@ class RLM:
             logger: The logger to use for the RLM.
             verbose: Whether to print verbose output in rich to console.
             persistent: If True, reuse the environment across completion() calls for multi-turn conversations.
+            store_prompt: If True, append store/batching instructions to the system prompt.
         """
         # Store config for spawning per-completion
         self.backend = backend
@@ -90,7 +93,8 @@ class RLM:
         self.depth = depth
         self.max_depth = max_depth
         self.max_iterations = max_iterations
-        self.system_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
+        base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
+        self.system_prompt = base_prompt + SMALL_MODEL_PROMPT_ADDON if store_prompt else base_prompt
         self.logger = logger
         self.verbose = VerbosePrinter(enabled=verbose)
 
@@ -237,7 +241,18 @@ class RLM:
                 )
 
                 # Check if RLM is done and has a final answer.
+                # First check the raw response (excluding code blocks)
                 final_answer = find_final_answer(iteration.response, environment=environment)
+
+                # If not found, check code execution stdout for FINAL() patterns
+                if final_answer is None:
+                    for code_block in iteration.code_blocks:
+                        if code_block.result and code_block.result.stdout:
+                            stdout_answer = find_final_answer(code_block.result.stdout)
+                            if stdout_answer is not None:
+                                final_answer = stdout_answer
+                                break
+
                 iteration.final_answer = final_answer
 
                 # If logger is used, log the iteration.

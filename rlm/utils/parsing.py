@@ -33,6 +33,8 @@ def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | 
     If FINAL_VAR is found and an environment is provided, executes code to retrieve the variable value.
     Returns None if neither pattern is found.
 
+    Note: FINAL() calls inside code blocks are ignored - those are handled by the REPL execution.
+
     Args:
         text: The response text to parse
         environment: Optional environment to execute code for FINAL_VAR retrieval
@@ -40,9 +42,13 @@ def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | 
     Returns:
         The final answer string, or None if no final answer pattern is found
     """
+    # Strip out code blocks to avoid matching FINAL() inside code
+    # This prevents capturing variable names like FINAL(result) in code blocks
+    text_without_code = re.sub(r"```(?:repl|python)?\s*\n.*?\n```", "", text, flags=re.DOTALL)
+
     # Check for FINAL_VAR pattern first - must be at start of line
-    final_var_pattern = r"^\s*FINAL_VAR\((.*?)\)"
-    match = re.search(final_var_pattern, text, re.MULTILINE | re.DOTALL)
+    final_var_pattern = r"^\s*FINAL_VAR\(([^)]+)\)"
+    match = re.search(final_var_pattern, text_without_code, re.MULTILINE)
     if match:
         variable_name = match.group(1).strip().strip('"').strip("'")
         if environment is not None:
@@ -53,9 +59,11 @@ def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | 
             return final_answer
         return None
 
-    # Check for FINAL pattern - must be at start of line
-    final_pattern = r"^\s*FINAL\((.*?)\)"
-    match = re.search(final_pattern, text, re.MULTILINE | re.DOTALL)
+    # Check for FINAL pattern - greedy match to handle nested parens
+    # Match FINAL( then capture everything until the last ) on the same logical block
+    # DOTALL makes . match newlines, MULTILINE makes ^ match line starts
+    final_pattern = r"^\s*FINAL\((.+)\)\s*$"
+    match = re.search(final_pattern, text_without_code, re.MULTILINE | re.DOTALL)
     if match:
         return match.group(1).strip()
 

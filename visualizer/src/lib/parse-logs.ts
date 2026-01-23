@@ -121,6 +121,9 @@ export function extractContextQuestion(iterations: RLMIteration[]): string {
 export function computeMetadata(iterations: RLMIteration[]): LogMetadata {
   let totalCodeBlocks = 0;
   let totalSubLMCalls = 0;
+  let totalStoreEvents = 0;
+  let totalBatchCalls = 0;
+  let totalBatchPrompts = 0;
   let totalExecutionTime = 0;
   let hasErrors = false;
   let finalAnswer: string | null = null;
@@ -147,6 +150,15 @@ export function computeMetadata(iterations: RLMIteration[]): LogMetadata {
         if (block.result.rlm_calls) {
           totalSubLMCalls += block.result.rlm_calls.length;
         }
+        if (block.result.store_events) {
+          totalStoreEvents += block.result.store_events.length;
+        }
+        if (block.result.batch_calls) {
+          totalBatchCalls += block.result.batch_calls.length;
+          for (const batch of block.result.batch_calls) {
+            totalBatchPrompts += batch.prompts_count || 0;
+          }
+        }
       }
     }
     
@@ -159,6 +171,9 @@ export function computeMetadata(iterations: RLMIteration[]): LogMetadata {
     totalIterations: iterations.length,
     totalCodeBlocks,
     totalSubLMCalls,
+    totalStoreEvents,
+    totalBatchCalls,
+    totalBatchPrompts,
     contextQuestion: extractContextQuestion(iterations),
     finalAnswer,
     totalExecutionTime,
@@ -178,4 +193,3 @@ export function parseLogFile(fileName: string, content: string): RLMLogFile {
     config,
   };
 }
-

@@ -1,11 +1,41 @@
 // Types matching the RLM log format
 
+export interface ModelUsageSummary {
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+}
+
+export interface UsageSummary {
+  model_usage_summaries: Record<string, ModelUsageSummary>;
+}
+
 export interface RLMChatCompletion {
+  root_model?: string;
   prompt: string | Record<string, unknown>;
   response: string;
-  prompt_tokens: number;
-  completion_tokens: number;
   execution_time: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  usage_summary?: UsageSummary;
+}
+
+export interface StoreEvent {
+  op: string;
+  id: string;
+  type: string;
+  description: string;
+  parents?: string[];
+  tags?: string[];
+  backrefs_count?: number;
+  ts: number;
+}
+
+export interface BatchCall {
+  prompts_count: number;
+  model: string | null;
+  execution_time: number;
+  ts: number;
 }
 
 export interface REPLResult {
@@ -14,6 +44,8 @@ export interface REPLResult {
   locals: Record<string, unknown>;
   execution_time: number;
   rlm_calls: RLMChatCompletion[];
+  store_events?: StoreEvent[];
+  batch_calls?: BatchCall[];
 }
 
 export interface CodeBlock {
@@ -56,6 +88,9 @@ export interface LogMetadata {
   totalIterations: number;
   totalCodeBlocks: number;
   totalSubLMCalls: number;
+  totalStoreEvents: number;
+  totalBatchCalls: number;
+  totalBatchPrompts: number;
   contextQuestion: string;
   finalAnswer: string | null;
   totalExecutionTime: number;
@@ -69,4 +104,3 @@ export function extractFinalAnswer(answer: string | [string, string] | null): st
   }
   return answer;
 }
-

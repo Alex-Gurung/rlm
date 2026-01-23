@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from rlm.core.comms_utils import LMRequest, send_lm_request, send_lm_request_batched
+from rlm.core.store import SpanRef, Store
 from rlm.core.types import REPLResult, RLMChatCompletion
 from rlm.environments.base_env import NonIsolatedEnv
 
@@ -125,6 +126,7 @@ class LocalREPL(NonIsolatedEnv):
         setup_code: str | None = None,
         persistent: bool = False,
         depth: int = 1,
+        sub_llm_max_chars: int = 64000,
         **kwargs,
     ):
         super().__init__(persistent=persistent, depth=depth, **kwargs)
@@ -135,6 +137,7 @@ class LocalREPL(NonIsolatedEnv):
         self._lock = threading.Lock()
         self._context_count: int = 0
         self._history_count: int = 0
+        self.sub_llm_max_chars = sub_llm_max_chars
 
         # Setup globals, locals, and modules in environment.
         self.setup()
@@ -159,10 +162,18 @@ class LocalREPL(NonIsolatedEnv):
         # Track LLM calls made during code execution
         self._pending_llm_calls: list[RLMChatCompletion] = []
 
+        # Create store for hierarchical data management
+        self.store = Store()
+        self.store.set_llm_batch_fn(self._llm_query_batched)
+
         # Add helper functions
         self.globals["FINAL_VAR"] = self._final_var
+        self.globals["FINAL"] = self._final  # Also allow FINAL() in code
         self.globals["llm_query"] = self._llm_query
         self.globals["llm_query_batched"] = self._llm_query_batched
+        self.globals["parse_json"] = self.parse_json
+        self.globals["store"] = self.store
+        self.globals["SpanRef"] = SpanRef
 
     def _final_var(self, variable_name: str) -> str:
         """Return the value of a variable as a final answer."""
@@ -170,6 +181,26 @@ class LocalREPL(NonIsolatedEnv):
         if variable_name in self.locals:
             return str(self.locals[variable_name])
         return f"Error: Variable '{variable_name}' not found"
+
+    def _final(self, answer: str) -> str:
+        """Return the answer directly (allows FINAL() in code blocks).
+
+        Prints FINAL(answer) to stdout so the parser can detect it.
+        """
+        print(f"FINAL({answer})")
+        return str(answer)
+
+    def parse_json(self, text: str) -> Any:
+        """Parse JSON from a string, stripping common Markdown fences."""
+        import json
+
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            # Strip outer fences, and optional language tag like ```json
+            cleaned = cleaned.strip("`").strip()
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+        return json.loads(cleaned)
 
     def _llm_query(self, prompt: str, model: str | None = None) -> str:
         """Query the LM via socket connection to the handler.
@@ -182,6 +213,12 @@ class LocalREPL(NonIsolatedEnv):
             return "Error: No LM handler configured"
 
         try:
+            if len(prompt) > self.sub_llm_max_chars:
+                original_len = len(prompt)
+                prompt = (
+                    f"[TRUNCATED_INPUT original_chars={original_len} max_chars={self.sub_llm_max_chars}]\n"
+                    + prompt[: self.sub_llm_max_chars]
+                )
             request = LMRequest(prompt=prompt, model=model, depth=self.depth)
             response = send_lm_request(self.lm_handler_address, request)
 
@@ -211,8 +248,17 @@ class LocalREPL(NonIsolatedEnv):
             return ["Error: No LM handler configured"] * len(prompts)
 
         try:
+            truncated_prompts: list[str] = []
+            for prompt in prompts:
+                if len(prompt) > self.sub_llm_max_chars:
+                    original_len = len(prompt)
+                    prompt = (
+                        f"[TRUNCATED_INPUT original_chars={original_len} max_chars={self.sub_llm_max_chars}]\n"
+                        + prompt[: self.sub_llm_max_chars]
+                    )
+                truncated_prompts.append(prompt)
             responses = send_lm_request_batched(
-                self.lm_handler_address, prompts, model=model, depth=self.depth
+                self.lm_handler_address, truncated_prompts, model=model, depth=self.depth
             )
 
             results = []
@@ -339,6 +385,12 @@ class LocalREPL(NonIsolatedEnv):
         # Clear pending LLM calls from previous execution
         self._pending_llm_calls = []
 
+        # Create sinks for this iteration's store/batch logging
+        store_events: list[dict] = []
+        batch_calls: list[dict] = []
+        self.store.set_event_sink(store_events)
+        self.store.set_batch_sink(batch_calls)
+
         with self._capture_output() as (stdout_buf, stderr_buf), self._temp_cwd():
             try:
                 combined = {**self.globals, **self.locals}
@@ -361,6 +413,8 @@ class LocalREPL(NonIsolatedEnv):
             locals=self.locals.copy(),
             execution_time=time.perf_counter() - start_time,
             rlm_calls=self._pending_llm_calls.copy(),
+            store_events=store_events,
+            batch_calls=batch_calls,
         )
 
     def __enter__(self):

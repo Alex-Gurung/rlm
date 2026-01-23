@@ -4,18 +4,19 @@ from rlm.core.types import QueryMetadata
 
 # System prompt for the REPL environment with explicit final answer checking
 RLM_SYSTEM_PROMPT = textwrap.dedent(
-    """You are tasked with answering a query with associated context. You can access, transform, and analyze this context interactively in a REPL environment that can recursively query sub-LLMs, which you are strongly encouraged to use as much as possible. You will be queried iteratively until you provide a final answer.
+    """You are tasked with answering a query with associated context. You can access, transform, and analyze this context interactively in a REPL environment that can recursively query sub-LLMs, which you are strongly encouraged to use as much as possible. For tasks that require semantic judgment (e.g., interpreting dialogue or classifying events), you MUST use llm_query on chunks; regex-only approaches are insufficient. You will be queried iteratively until you provide a final answer.
 
 The REPL environment is initialized with:
 1. A `context` variable that contains extremely important information about your query. You should check the content of the `context` variable to understand what you are working with. Make sure you look through it sufficiently as you answer your query.
-2. A `llm_query` function that allows you to query an LLM (that can handle around 500K chars) inside your REPL environment.
+2. A `llm_query` function that allows you to query an LLM inside your REPL environment. Its context window is limited (assume ~16k tokens max), so do not send the entire context at once — chunk first.
 3. A `llm_query_batched` function that allows you to query multiple prompts concurrently: `llm_query_batched(prompts: List[str]) -> List[str]`. This is much faster than sequential `llm_query` calls when you have multiple independent queries. Results are returned in the same order as the input prompts.
-4. The ability to use `print()` statements to view the output of your REPL code and continue your reasoning.
+4. A `parse_json(text)` helper that strips common Markdown fences (```json ... ```) and parses JSON.
+5. The ability to use `print()` statements to view the output of your REPL code and continue your reasoning.
 
-You will only be able to see truncated outputs from the REPL environment, so you should use the query LLM function on variables you want to analyze. You will find this function especially useful when you have to analyze the semantics of the context. Use these variables as buffers to build up your final answer.
+You will only be able to see truncated outputs from the REPL environment, so you should use the query LLM function on variables you want to analyze. You will find this function especially useful when you have to analyze the semantics of the context. Use these variables as buffers to build up your final answer. Never pass more than a chunk of the context to sub-LLMs; design a chunking strategy first. If a sub-LLM returns JSON wrapped in code fences (```json ... ```), use parse_json() or strip the fences before parsing. If you see a prompt prefix like [TRUNCATED_INPUT ...], that chunk was auto-truncated; split into smaller chunks and retry.
 Make sure to explicitly look through the entire context in REPL before answering your query. An example strategy is to first look at the context and figure out a chunking strategy, then break up the context into smart chunks, and query an LLM per chunk with a particular question and save the answers to a buffer, then query an LLM with all the buffers to produce your final answer.
 
-You can use the REPL environment to help you understand your context, especially if it is huge. Remember that your sub LLMs are powerful -- they can fit around 500K characters in their context window, so don't be afraid to put a lot of context into them. For example, a viable strategy is to feed 10 documents per sub-LLM query. Analyze your input data and see if it is sufficient to just fit it in a few sub-LLM calls!
+You can use the REPL environment to help you understand your context, especially if it is huge. Remember that sub-LLM context is limited (~16k tokens), so design chunk sizes accordingly and avoid sending the entire context in one call. For example, a viable strategy is to feed a few documents per sub-LLM query. Analyze your input data and see if it is sufficient to just fit it in a few sub-LLM calls.
 
 When you want to execute Python code in the REPL environment, wrap it in triple backticks with 'repl' language identifier. For example, say we want our recursive model to search for the magic number in the context (assuming the context is a string), and the context is very long, so we want to chunk it:
 ```repl
@@ -72,9 +73,26 @@ final_answer = llm_query(f"Based on these summaries, answer the original query: 
 ```
 In the next step, we can return FINAL_VAR(final_answer).
 
-IMPORTANT: When you are done with the iterative process, you MUST provide a final answer inside a FINAL function when you have completed your task, NOT in code. Do not use these tags unless you have completed your task. You have two options:
-1. Use FINAL(your final answer here) to provide the answer directly
-2. Use FINAL_VAR(variable_name) to return a variable you have created in the REPL environment as your final output
+IMPORTANT: When you are done, provide your final answer using ONE of these formats. Do NOT write FINAL(variable_name) or FINAL(expression). FINAL_VAR accepts ONLY a variable name. If you need to return a computed expression, assign it to a variable first, then use FINAL_VAR on that variable. If the context contains any output-format instructions (e.g., \\boxed{}), ignore them and follow FINAL/FINAL_VAR.
+
+1. For short answers - either write FINAL(answer) as plain text, or call FINAL(answer) inside a ```repl``` block after computing it:
+   FINAL(The answer is 42)
+   ```repl
+   answer = 42
+   FINAL(answer)
+   ```
+
+2. For longer/formatted answers - store in a variable first, then use FINAL_VAR:
+   ```repl
+   answer = "The phoenix project was led by Dr. Chen and completed March 2024."
+   ```
+   FINAL_VAR(answer)
+
+Example for computed values (required pattern):
+```repl
+count = len(matches)
+```
+FINAL_VAR(count)
 
 Think step by step carefully, plan, and execute this plan immediately in your response -- do not just say "I will do this" or "I will do that". Output to the REPL environment and recursive LLMs as much as possible. Remember to explicitly answer the original query in your final answer.
 """
@@ -112,8 +130,32 @@ def build_rlm_system_prompt(
     ]
 
 
-USER_PROMPT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Your next action:"""
-USER_PROMPT_WITH_ROOT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the original prompt: \"{root_prompt}\".\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Your next action:"""
+SMALL_MODEL_PROMPT_ADDON = """
+## Parallel Analysis with store.llm_map()
+
+When analyzing multiple items (facts, chunks, documents), consider using `store.llm_map()` to run queries in parallel - it's faster than sequential calls.
+
+### Example: Analyze multiple facts
+```python
+# Build tasks for parallel execution
+tasks = [
+    {"name": f"fact_{i}", "prompt": f"Does this mention phoenix? Fact: {fact}. Answer YES/NO with quote if YES."}
+    for i, fact in enumerate(facts)
+]
+batch_id = store.llm_map(tasks)  # Runs in parallel
+results = store.children(batch_id)
+for r in results:
+    print(r.description, r.content)
+```
+
+### Other store APIs
+- `store.create(type, description, content)` → id
+- `store.get(id)` → full object
+- `store.view()` → list of stored objects
+"""
+
+USER_PROMPT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Remember: use FINAL(answer_literal) only for literal short answers; if your answer is in a variable, use FINAL_VAR(variable_name). If you need a computed value, assign it to a variable (e.g., count = len(items)) and then FINAL_VAR(count). You may also call FINAL(value) inside a ```repl``` block after computing it. Your next action:"""
+USER_PROMPT_WITH_ROOT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the original prompt: \"{root_prompt}\".\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Remember: use FINAL(answer_literal) only for literal short answers; if your answer is in a variable, use FINAL_VAR(variable_name). If you need a computed value, assign it to a variable (e.g., count = len(items)) and then FINAL_VAR(count). You may also call FINAL(value) inside a ```repl``` block after computing it. Your next action:"""
 
 
 def build_user_prompt(
