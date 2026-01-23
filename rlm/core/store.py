@@ -243,9 +243,9 @@ class Store:
         """
         return self.view(query, limit)
 
-    def suggest(self, query: str = "", limit: int = 10) -> dict[str, Any]:
+    def summary(self, query: str = "", limit: int = 10) -> dict[str, Any]:
         """
-        Provide a lightweight search suggestion payload.
+        Provide a lightweight search summary payload.
 
         Returns:
             Dict with:

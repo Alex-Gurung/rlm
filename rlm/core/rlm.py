@@ -22,8 +22,7 @@ from rlm.utils.parsing import (
 )
 from rlm.utils.prompts import (
     RLM_SYSTEM_PROMPT,
-    SHARED_STORE_PROMPT_ADDON,
-    SMALL_MODEL_PROMPT_ADDON,
+    STORE_PROMPT_ADDON,
     QueryMetadata,
     build_rlm_system_prompt,
     build_user_prompt,
@@ -54,7 +53,7 @@ class RLM:
         logger: RLMLogger | None = None,
         verbose: bool = False,
         persistent: bool = False,
-        store_prompt: bool = False,
+        store_mode: str = "shared",
     ):
         """
         Args:
@@ -71,7 +70,7 @@ class RLM:
             logger: The logger to use for the RLM.
             verbose: Whether to print verbose output in rich to console.
             persistent: If True, reuse the environment across completion() calls for multi-turn conversations.
-            store_prompt: If True, append store/batching instructions to the system prompt.
+            store_mode: "shared" (default) uses SharedStore with full prompt, "none" disables store for benchmarking.
         """
         # Store config for spawning per-completion
         self.backend = backend
@@ -94,23 +93,20 @@ class RLM:
         self.depth = depth
         self.max_depth = max_depth
         self.max_iterations = max_iterations
-        self.store_prompt = store_prompt
+        self.store_mode = store_mode
 
         # Build system prompt with optional addons
         base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
-        if store_prompt:
-            self.system_prompt = base_prompt + SMALL_MODEL_PROMPT_ADDON + SHARED_STORE_PROMPT_ADDON
+        if store_mode == "shared":
+            self.system_prompt = base_prompt + STORE_PROMPT_ADDON
         else:
             self.system_prompt = base_prompt
 
         self.logger = logger
         self.verbose = VerbosePrinter(enabled=verbose)
 
-        # Shared store for parallel workers (created lazily when enabled and local env)
+        # Shared store for parallel workers (created when store_mode="shared" and local env)
         self._shared_store = None
-        self._shared_store_enabled = False
-        if self.environment_kwargs.get("shared_store", False):
-            self._shared_store_enabled = True
 
         # Persistence support
         self.persistent = persistent
@@ -195,8 +191,11 @@ class RLM:
             # Pass logger for hierarchical logging
             env_kwargs["logger"] = self.logger
 
-            # Create shared store for local environments when explicitly enabled
-            if self._shared_store_enabled and self.environment_type == "local":
+            # Pass store_mode to environment
+            env_kwargs["store_mode"] = self.store_mode
+
+            # Create shared store for local environments when store_mode="shared"
+            if self.store_mode == "shared" and self.environment_type == "local":
                 if self._shared_store is None or not self.persistent:
                     from rlm.core.shared_store import SharedStore
                     self._shared_store = SharedStore()

@@ -159,7 +159,7 @@ def build_tasks(file_list: list[str], root_path: str, num_tasks: int, min_matche
     return tasks
 
 
-def build_root_prompt(tasks: list[Task]) -> str:
+def build_root_prompt(tasks: list[Task], store_enabled: bool) -> str:
     task_lines = []
     for i, task in enumerate(tasks, start=1):
         task_lines.append(
@@ -167,17 +167,51 @@ def build_root_prompt(tasks: list[Task]) -> str:
             f"Pattern: /{task.pattern}/. Answer with one path per line."
         )
 
-    return (
+    prefix = (
         "You are analyzing a codebase snapshot. Use the REPL to inspect the context. "
         "You may use rlm_worker() to parallelize across directories and apply_commit() to share findings. "
-        "The context format is:\n"
-        "- FILE LISTING: lines between 'FILE LISTING:' and the 'FILE CONTENTS' separator\n"
-        "- FILE CONTENTS: each file is prefixed by '=== FILE: <path> ==='\n"
-        "If the context is large, extract per-file blocks from FILE CONTENTS and scan those. "
-        "Return answers to the questions below.\n\n"
+        if store_enabled
+        else "You are analyzing a codebase snapshot. Use the REPL to inspect the context. "
+    )
+
+    return (
+        prefix
+        + "The context format is:\n"
+        "- FILE LISTING: lines between 'FILE LISTING:' and the FILE CONTENTS header\n"
+        "- FILE CONTENTS header: a line containing 'FILE CONTENTS' between two lines of '='\n"
+        "- FILE CONTENTS blocks: each file starts with a line like '=== FILE: <path> ==='\n"
+        "Prefer extracting paths from the FILE CONTENTS blocks (more reliable than parsing the listing). "
+        "After executing any code, return answers to the questions below as plain text (no code blocks).\n"
+        "If you build intermediate dicts, use stable keys like Q1/Q2/Q3 (avoid using raw pattern strings).\n"
+        "Helpers available: extract_file_blocks(context), find_matches(blocks, patterns), format_answers(matches, keys).\n"
+        "safe_append(d, key, value) is also available to avoid KeyError when accumulating lists.\n\n"
         "Questions:\n" + "\n".join(task_lines) + "\n\n"
         "Answer format: Provide a section per question labeled 'Q1', 'Q2', etc., followed by file paths."
     )
+
+
+def extract_first_error(log_file: str) -> str | None:
+    """Return the first stderr exception line found in the log, if any."""
+    try:
+        with open(log_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "iteration":
+                    continue
+                for block in entry.get("code_blocks", []):
+                    result = block.get("result", {})
+                    stderr = result.get("stderr", "")
+                    if stderr:
+                        for sline in stderr.splitlines():
+                            sline = sline.strip()
+                            if sline:
+                                return sline
+    except FileNotFoundError:
+        return None
+    return None
 
 
 def extract_paths_from_response(response: str, file_list: Iterable[str]) -> set[str]:
@@ -247,6 +281,7 @@ def run_benchmark(
     log_dir: str,
     max_iterations: int,
     store_prompt: bool,
+    environment_kwargs: dict | None = None,
 ) -> RunResult:
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logger = RLMLogger(log_dir=log_dir, file_name=f"filesystem_{name}")
@@ -255,18 +290,43 @@ def run_benchmark(
         backend=backend,
         backend_kwargs=backend_kwargs,
         environment="local",
+        environment_kwargs=environment_kwargs or {},
         max_depth=3,
         max_iterations=max_iterations,
         logger=logger,
         verbose=True,
-        store_prompt=store_prompt,
+        store_mode="shared" if store_prompt else "none",
     )
 
-    root_prompt = build_root_prompt(tasks)
+    root_prompt = build_root_prompt(tasks, store_enabled=store_prompt)
 
     start = time.perf_counter()
     result = rlm.completion(context, root_prompt=root_prompt)
     wall_time = time.perf_counter() - start
+
+    retry_log_path = None
+    err_line = extract_first_error(logger.log_file_path)
+    if err_line:
+        retry_logger = RLMLogger(log_dir=log_dir, file_name=f"filesystem_{name}_retry")
+        retry_rlm = RLM(
+            backend=backend,
+            backend_kwargs=backend_kwargs,
+            environment="local",
+            environment_kwargs=environment_kwargs or {},
+            max_depth=3,
+            max_iterations=max_iterations,
+            logger=retry_logger,
+            verbose=True,
+            store_mode="shared" if store_prompt else "none",
+        )
+        retry_prompt = (
+            root_prompt
+            + f"\n\nNote: Your previous code error was: {err_line}. Fix the error and retry."
+        )
+        retry_start = time.perf_counter()
+        result = retry_rlm.completion(context, root_prompt=retry_prompt)
+        wall_time += time.perf_counter() - retry_start
+        retry_log_path = retry_logger.log_file_path
 
     response = result.response or ""
     precisions = []
@@ -278,7 +338,8 @@ def run_benchmark(
         recalls.append(recall)
         f1s.append(f1)
 
-    metrics = parse_log_metrics(logger.log_file_path)
+    metrics = parse_log_metrics(retry_log_path or logger.log_file_path)
+    metrics["retried"] = 1 if retry_log_path else 0
 
     return RunResult(
         name=name,
@@ -287,7 +348,7 @@ def run_benchmark(
         avg_precision=sum(precisions) / len(precisions),
         avg_recall=sum(recalls) / len(recalls),
         wall_time=wall_time,
-        log_path=logger.log_file_path,
+        log_path=retry_log_path or logger.log_file_path,
         metrics=metrics,
     )
 
@@ -315,6 +376,7 @@ def print_report(results: list[RunResult], tasks: list[Task]) -> None:
         ("Commit Events", [str(r.metrics["commit_events"]) for r in results]),
         ("Worker Spawns", [str(r.metrics["worker_spawns"]) for r in results]),
         ("Worker Completes", [str(r.metrics["worker_completes"]) for r in results]),
+        ("Retried", [str(r.metrics.get("retried", 0)) for r in results]),
     ]
 
     for label, values in rows:
@@ -366,6 +428,45 @@ def main() -> None:
     )
 
     results: list[RunResult] = []
+    setup_code = (
+        "import re\n"
+        "def safe_append(d, key, value):\n"
+        "    if key not in d:\n"
+        "        d[key] = []\n"
+        "    d[key].append(value)\n"
+        "\n"
+        "def extract_file_blocks(context):\n"
+        "    blocks = []\n"
+        "    current_path = None\n"
+        "    current_content = []\n"
+        "    for line in context.splitlines():\n"
+        "        line_stripped = line.strip()\n"
+        "        if line_stripped.startswith('=== FILE: ') and line_stripped.endswith(' ==='):\n"
+        "            if current_path is not None:\n"
+        "                blocks.append((current_path, '\\n'.join(current_content)))\n"
+        "            current_path = line_stripped[len('=== FILE: '):-len(' ===')].strip()\n"
+        "            current_content = []\n"
+        "        elif current_path is not None:\n"
+        "            current_content.append(line)\n"
+        "    if current_path is not None:\n"
+        "        blocks.append((current_path, '\\n'.join(current_content)))\n"
+        "    return blocks\n"
+        "\n"
+        "def find_matches(blocks, patterns):\n"
+        "    compiled = {k: re.compile(v, re.IGNORECASE) for k, v in patterns.items()}\n"
+        "    results = {k: [] for k in patterns.keys()}\n"
+        "    for path, content in blocks:\n"
+        "        for key, cregex in compiled.items():\n"
+        "            if cregex.search(content):\n"
+        "                results[key].append(path)\n"
+        "    return results\n"
+        "\n"
+        "def format_answers(matches, keys):\n"
+        "    parts = []\n"
+        "    for key in keys:\n"
+        "        parts.append(f\"{key}\\n\" + \"\\n\".join(matches.get(key, [])))\n"
+        "    return \"\\n\\n\".join(parts)\n"
+    )
     if not args.store_only:
         results.append(
             run_benchmark(
@@ -378,6 +479,7 @@ def main() -> None:
                 log_dir=args.log_dir,
                 max_iterations=args.max_iterations,
                 store_prompt=False,
+                environment_kwargs={"setup_code": setup_code},
             )
         )
     if not args.baseline_only:
@@ -392,6 +494,7 @@ def main() -> None:
                 log_dir=args.log_dir,
                 max_iterations=args.max_iterations,
                 store_prompt=True,
+                environment_kwargs={"setup_code": setup_code},
             )
         )
 

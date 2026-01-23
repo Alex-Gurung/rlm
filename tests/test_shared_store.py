@@ -551,8 +551,8 @@ class TestSharedStoreLlmMap:
             )
 
 
-class TestSharedStoreSearchSuggest:
-    """Tests for search() and suggest()."""
+class TestSharedStoreSearchSummary:
+    """Tests for search() and summary()."""
 
     def test_search_alias(self):
         shared = SharedStore()
@@ -563,12 +563,12 @@ class TestSharedStoreSearchSuggest:
         assert len(results) == 1
         assert results[0]["description"] == "Alpha note"
 
-    def test_suggest_returns_matches_and_facets(self):
+    def test_summary_returns_matches_and_facets(self):
         shared = SharedStore()
         shared.create(worker_id="w1", type="note", description="Alpha note", content="c1", tags=["t1"])
         shared.create(worker_id="w2", type="evidence", description="Alpha evidence", content="c2", tags=["t2"])
 
-        summary = shared.suggest('desc~"Alpha"')
+        summary = shared.summary('desc~"Alpha"')
         assert "matches" in summary
         assert "types" in summary
         assert "tags" in summary

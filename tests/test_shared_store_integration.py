@@ -1,9 +1,9 @@
 """Integration tests for SharedStore with LocalREPL.
 
 These tests verify that:
-1. LocalREPL correctly uses WorkerStoreProxy when shared_store is provided
+1. LocalREPL correctly uses WorkerStoreProxy when store_mode="shared" (default)
 2. Multiple LocalREPL instances sharing a store can see each other's objects
-3. Isolated stores (baseline) don't share between REPLs
+3. store_mode="none" disables store for benchmarking original RLM
 """
 
 import pytest
@@ -15,7 +15,16 @@ from rlm.environments.local_repl import LocalREPL
 class TestLocalREPLWithSharedStore:
     """Tests for LocalREPL using SharedStore."""
 
-    def test_uses_worker_store_proxy(self):
+    def test_uses_worker_store_proxy_by_default(self):
+        """LocalREPL uses WorkerStoreProxy by default (store_mode='shared')."""
+        repl = LocalREPL()
+
+        assert isinstance(repl.store, WorkerStoreProxy)
+        assert repl._worker_id is not None
+        assert repl._worker_id.startswith("worker_")
+        repl.cleanup()
+
+    def test_uses_worker_store_proxy_with_injected_store(self):
         """LocalREPL uses WorkerStoreProxy when shared_store provided."""
         shared = SharedStore()
         repl = LocalREPL(shared_store=shared, worker_id="test_worker")
@@ -24,18 +33,17 @@ class TestLocalREPLWithSharedStore:
         assert repl.store.worker_id == "test_worker"
         repl.cleanup()
 
-    def test_uses_isolated_store_by_default(self):
-        """LocalREPL uses isolated Store when no shared_store provided."""
-        repl = LocalREPL()
+    def test_store_mode_none_has_no_store(self):
+        """store_mode='none' doesn't expose store (benchmark mode)."""
+        repl = LocalREPL(store_mode="none")
 
-        assert isinstance(repl.store, Store)
-        assert not isinstance(repl.store, WorkerStoreProxy)
+        assert repl.store is None
+        assert "store" not in repl.globals
         repl.cleanup()
 
     def test_generates_worker_id_if_not_provided(self):
-        """LocalREPL generates worker_id if shared_store provided but no worker_id."""
-        shared = SharedStore()
-        repl = LocalREPL(shared_store=shared)
+        """LocalREPL generates worker_id when store_mode='shared'."""
+        repl = LocalREPL(store_mode="shared")
 
         assert isinstance(repl.store, WorkerStoreProxy)
         assert repl._worker_id is not None
@@ -126,13 +134,49 @@ class TestLocalREPLWithSharedStore:
         repl_b.cleanup()
 
 
-class TestIsolatedVsSharedStore:
-    """Compare isolated store (baseline) vs shared store behavior."""
+class TestStoreModeNone:
+    """Tests for store_mode='none' (benchmark mode)."""
 
-    def test_isolated_stores_dont_share(self):
-        """Baseline: separate REPLs have isolated stores."""
-        repl_a = LocalREPL()  # No shared_store
-        repl_b = LocalREPL()  # No shared_store
+    def test_no_store_exposed(self):
+        """store_mode='none' doesn't expose store global."""
+        repl = LocalREPL(store_mode="none")
+
+        assert "store" not in repl.globals
+        assert repl.store is None
+        repl.cleanup()
+
+    def test_llm_query_still_works(self):
+        """llm_query is available without store."""
+        repl = LocalREPL(store_mode="none")
+
+        assert "llm_query" in repl.globals
+        assert "llm_query_batched" in repl.globals
+        repl.cleanup()
+
+    def test_context_still_works(self):
+        """Context loading works without store."""
+        repl = LocalREPL(store_mode="none", context_payload="test context")
+
+        assert repl.locals.get("context") == "test context"
+        repl.cleanup()
+
+    def test_parse_json_still_works(self):
+        """parse_json is available without store."""
+        repl = LocalREPL(store_mode="none")
+
+        assert "parse_json" in repl.globals
+        repl.execute_code('result = parse_json(\'{"key": "value"}\')')
+        assert repl.locals.get("result") == {"key": "value"}
+        repl.cleanup()
+
+
+class TestIsolatedVsSharedStore:
+    """Compare standalone REPLs (each with own SharedStore) vs injected SharedStore."""
+
+    def test_standalone_repls_have_separate_stores(self):
+        """Standalone REPLs (no injected store) have separate SharedStores."""
+        repl_a = LocalREPL(store_mode="shared")  # Creates its own SharedStore
+        repl_b = LocalREPL(store_mode="shared")  # Creates its own SharedStore
 
         # Worker A creates an object
         repl_a.execute_code('store.create(type="note", description="From A", content="...")')
@@ -142,7 +186,7 @@ class TestIsolatedVsSharedStore:
         my_items = repl_a.locals.get("my_items")
         assert len(my_items) == 1
 
-        # Worker B cannot see it (isolated stores)
+        # Worker B cannot see it (separate SharedStores)
         repl_b.execute_code('results = store.view()')
         results = repl_b.locals.get("results")
 
@@ -151,8 +195,8 @@ class TestIsolatedVsSharedStore:
         repl_a.cleanup()
         repl_b.cleanup()
 
-    def test_shared_stores_do_share(self):
-        """Shared store: separate REPLs see each other's objects."""
+    def test_injected_shared_stores_do_share(self):
+        """REPLs with same injected SharedStore see each other's objects."""
         shared = SharedStore()
         repl_a = LocalREPL(shared_store=shared, worker_id="worker_A")
         repl_b = LocalREPL(shared_store=shared, worker_id="worker_B")

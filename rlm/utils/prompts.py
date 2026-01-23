@@ -130,28 +130,63 @@ def build_rlm_system_prompt(
     ]
 
 
-SMALL_MODEL_PROMPT_ADDON = """
-## Parallel Analysis with store.llm_map()
+STORE_PROMPT_ADDON = """
+## Shared Store
 
-When analyzing multiple items (facts, chunks, documents), consider using `store.llm_map()` to run queries in parallel - it's faster than sequential calls.
+You have access to a shared store for organizing findings. All parallel workers share the same store and can see each other's findings in real-time.
 
-### Example: Analyze multiple facts
+### Creating Objects
+
 ```python
-# Build tasks for parallel execution
+obj_id = store.create(
+    type="evidence",           # Type: "note", "evidence", "claim", "summary", etc.
+    description="Found X",     # Short description (<200 chars)
+    content={"quote": "..."}   # Any JSON-serializable data
+)
+```
+
+### Viewing Objects
+
+```python
+# See ALL objects (from all workers including yourself)
+items = store.view()                      # Returns [{id, type, description, tags, worker}, ...]
+items = store.view("type=evidence")       # Filter by type
+items = store.view('desc~"keyword"')      # Filter by description contains
+
+# See only OTHER workers' objects (excludes your own)
+others = store.view_others("type=evidence")
+
+# Get full object by ID
+obj = store.get(obj_id)  # Returns object with .content, .backrefs, etc.
+```
+
+### Query Syntax
+
+- `type=note` - filter by object type
+- `tag=important` - filter by tag
+- `worker=worker_1` - filter by worker ID
+- `desc~"keyword"` - description contains keyword
+- `parent=abc123` - filter by parent ID
+
+### Parallel LLM Queries with Automatic Storage
+
+```python
 tasks = [
-    {"name": f"fact_{i}", "prompt": f"Does this mention phoenix? Fact: {fact}. Answer YES/NO with quote if YES."}
-    for i, fact in enumerate(facts)
+    {"name": f"chunk_{i}", "prompt": f"Analyze this chunk: {chunk}"}
+    for i, chunk in enumerate(chunks)
 ]
-batch_id = store.llm_map(tasks)  # Runs in parallel
+batch_id = store.llm_map(tasks)  # Runs in parallel, stores results
 results = store.children(batch_id)
 for r in results:
     print(r.description, r.content)
 ```
 
-### Other store APIs
-- `store.create(type, description, content)` → id
-- `store.get(id)` → full object
-- `store.view()` → list of stored objects
+### When to Use
+
+- **store.create()**: Save findings worth remembering (evidence, claims, summaries)
+- **store.view_others()**: Check what parallel workers have found
+- **store.llm_map()**: Parallel analysis with automatic result storage
+- **llm_query()**: Simple one-off questions (results not stored)
 """
 
 USER_PROMPT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Remember: use FINAL(answer_literal) only for literal short answers; if your answer is in a variable, use FINAL_VAR(variable_name). If you need a computed value, assign it to a variable (e.g., count = len(items)) and then FINAL_VAR(count). You may also call FINAL(value) inside a ```repl``` block after computing it. Your next action:"""
@@ -252,62 +287,8 @@ else:
 
 If you need a lightweight overview, use:
 ```python
-summary = store.suggest('desc~"trainer"')
+summary = store.summary('desc~"trainer"')
 print(summary["types"], summary["tags"])
 ```
 """
 
-SHARED_STORE_PROMPT_ADDON = """
-## Shared Store for Parallel Workers
-
-If a shared store is enabled for this run, parallel workers can see each other's findings in real-time.
-
-### Viewing other workers' findings
-
-```python
-# See what ALL workers (including yourself) have found
-all_findings = store.view("type=evidence")
-for obj in all_findings:
-    print(f"Worker {obj['worker']} found: {obj['description']}")
-
-# See only what OTHER workers have found (excludes your own)
-others = store.view_others("type=evidence")
-for obj in others:
-    print(f"Worker {obj['worker']} found: {obj['description']}")
-```
-
-### Creating objects (automatically attributed to you)
-
-```python
-# Your creates are automatically attributed to your worker ID
-my_id = store.create(
-    type="evidence",
-    description="Found key insight about X",
-    content={"quote": "...", "analysis": "..."}
-)
-```
-
-### Spawning parallel workers
-
-```python
-# Spawn multiple workers in parallel - they can share the same store if enabled
-tasks = [
-    {"prompt": f"Analyze chunk {i}: {chunk}"}
-    for i, chunk in enumerate(chunks)
-]
-commits = rlm_worker_batched(tasks, max_parallel=8)
-
-# After completion, merge their commits:
-for commit in commits:
-    apply_commit(commit)
-```
-
-### Query syntax
-
-The store supports these query filters:
-- `type=note` - filter by object type
-- `tag=important` - filter by tag
-- `worker=worker_1_abc123` - filter by worker ID
-- `desc~"keyword"` - description contains keyword
-- `parent=abc123` - filter by parent ID
-"""

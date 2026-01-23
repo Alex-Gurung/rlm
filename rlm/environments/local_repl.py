@@ -149,6 +149,7 @@ class LocalREPL(NonIsolatedEnv):
         worker_other_backend_kwargs: list[dict[str, Any]] | None = None,
         worker_commit_prompt: bool = True,
         logger: "RLMLogger | None" = None,
+        store_mode: str = "shared",
         shared_store: SharedStore | None = None,
         worker_id: str | None = None,
         **kwargs,
@@ -186,9 +187,12 @@ class LocalREPL(NonIsolatedEnv):
         # Track commit events during code execution
         self._pending_commit_events: list[CommitEvent] = []
 
+        # Store mode: "shared" (default) or "none" (benchmark mode)
+        self._store_mode = store_mode
+
         # Shared store for parallel workers
         self._shared_store = shared_store
-        if shared_store is not None:
+        if store_mode == "shared":
             # Generate worker_id if not provided
             self._worker_id = worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
         else:
@@ -217,31 +221,38 @@ class LocalREPL(NonIsolatedEnv):
         # Track LLM calls made during code execution
         self._pending_llm_calls: list[RLMChatCompletion] = []
 
-        # Create store for hierarchical data management
-        # If shared_store is provided, use a WorkerStoreProxy; otherwise create isolated Store
-        if self._shared_store is not None:
-            worker_id = self._worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
-            self._worker_id = worker_id
-            self.store = WorkerStoreProxy(self._shared_store, worker_id)
-        else:
-            self.store = Store()
-        self.store.set_llm_batch_fn(self._llm_query_batched)
-
-        # Add helper functions
+        # Add helper functions (always available)
         self.globals["FINAL_VAR"] = self._final_var
         self.globals["FINAL"] = self._final  # Also allow FINAL() in code
         self.globals["llm_query"] = self._llm_query
         self.globals["llm_query_batched"] = self._llm_query_batched
         self.globals["parse_json"] = self.parse_json
-        self.globals["store"] = self.store
-        self.globals["SpanRef"] = SpanRef
 
-        # Commit protocol globals
-        self.globals["rlm_worker"] = self._rlm_worker
-        self.globals["rlm_worker_batched"] = self._rlm_worker_batched
-        self.globals["parse_commit"] = parse_commit
-        self.globals["apply_commit"] = self._apply_commit
-        self.globals["Commit"] = Commit
+        # Create store for hierarchical data management (only when store_mode="shared")
+        if self._store_mode == "shared":
+            if self._shared_store is not None:
+                worker_id = self._worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
+                self._worker_id = worker_id
+                self.store = WorkerStoreProxy(self._shared_store, worker_id)
+            else:
+                # Standalone REPL without RLM - create isolated SharedStore
+                self._shared_store = SharedStore()
+                worker_id = self._worker_id or f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
+                self._worker_id = worker_id
+                self.store = WorkerStoreProxy(self._shared_store, worker_id)
+            self.store.set_llm_batch_fn(self._llm_query_batched)
+            self.globals["store"] = self.store
+            self.globals["SpanRef"] = SpanRef
+
+            # Commit protocol globals (only available with store)
+            self.globals["rlm_worker"] = self._rlm_worker
+            self.globals["rlm_worker_batched"] = self._rlm_worker_batched
+            self.globals["parse_commit"] = parse_commit
+            self.globals["apply_commit"] = self._apply_commit
+            self.globals["Commit"] = Commit
+        else:
+            # store_mode="none" - no store exposed (benchmark mode)
+            self.store = None
 
     def _final_var(self, variable_name: str) -> str:
         """Return the value of a variable as a final answer."""
@@ -668,8 +679,9 @@ class LocalREPL(NonIsolatedEnv):
         # Create sinks for this iteration's store/batch logging
         store_events: list[dict] = []
         batch_calls: list[dict] = []
-        self.store.set_event_sink(store_events)
-        self.store.set_batch_sink(batch_calls)
+        if self.store is not None:
+            self.store.set_event_sink(store_events)
+            self.store.set_batch_sink(batch_calls)
 
         with self._capture_output() as (stdout_buf, stderr_buf), self._temp_cwd():
             try:

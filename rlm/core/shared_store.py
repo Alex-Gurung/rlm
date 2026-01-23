@@ -410,9 +410,9 @@ class SharedStore:
         """
         return self.view(query_str, limit)
 
-    def suggest(self, query_str: str = "", limit: int = 10) -> dict[str, Any]:
+    def summary(self, query_str: str = "", limit: int = 10) -> dict[str, Any]:
         """
-        Provide a lightweight search suggestion payload.
+        Provide a lightweight search summary payload.
 
         Returns:
             Dict with:
@@ -681,11 +681,11 @@ class WorkerStoreProxy:
         """
         return self._store.search(query, limit)
 
-    def suggest(self, query: str = "", limit: int = 10) -> dict[str, Any]:
+    def summary(self, query: str = "", limit: int = 10) -> dict[str, Any]:
         """
-        Provide a lightweight search suggestion payload.
+        Provide a lightweight search summary payload.
         """
-        return self._store.suggest(query, limit)
+        return self._store.summary(query, limit)
 
     def view_others(self, query: str = "", limit: int = 50) -> list[dict]:
         """
