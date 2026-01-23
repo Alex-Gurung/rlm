@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ast
 import copy
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -21,7 +23,7 @@ from rlm.core.shared_store import SharedStore, WorkerStoreProxy
 from rlm.core.store import SpanRef, Store
 from rlm.core.types import CommitEvent, REPLResult, RLMChatCompletion
 from rlm.environments.base_env import NonIsolatedEnv
-from rlm.utils.prompts import COMMIT_PROTOCOL_PROMPT_ADDON
+from rlm.utils.prompts import COMMIT_PROTOCOL_PROMPT_ADDON, SUB_LLM_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from rlm.core.rlm import RLM
@@ -123,6 +125,30 @@ _SAFE_BUILTINS = {
     "locals": None,
 }
 
+# File extensions treated as file-based context when context_payload is a dict
+_FILE_CONTEXT_EXTENSIONS = {
+    ".txt",
+    ".json",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+}
+
 
 class LocalREPL(NonIsolatedEnv):
     """
@@ -148,10 +174,13 @@ class LocalREPL(NonIsolatedEnv):
         worker_other_backends: list[str] | None = None,
         worker_other_backend_kwargs: list[dict[str, Any]] | None = None,
         worker_commit_prompt: bool = True,
+        worker_commit_prompt_addon: str | None = None,
+        worker_prompt_preset: str | None = None,
         logger: "RLMLogger | None" = None,
         store_mode: str = "shared",
         shared_store: SharedStore | None = None,
         worker_id: str | None = None,
+        sub_llm_system_prompt: str | None = SUB_LLM_SYSTEM_PROMPT,
         **kwargs,
     ):
         super().__init__(persistent=persistent, depth=depth, **kwargs)
@@ -162,6 +191,8 @@ class LocalREPL(NonIsolatedEnv):
         self._lock = threading.Lock()
         self._context_count: int = 0
         self._history_count: int = 0
+        self._context_files: set[str] = set()
+        self._context_file_map: dict[str, str] = {}
         self.sub_llm_max_chars = sub_llm_max_chars
 
         # Depth tracking for nested workers
@@ -180,6 +211,9 @@ class LocalREPL(NonIsolatedEnv):
         self._worker_other_backends = worker_other_backends
         self._worker_other_backend_kwargs = worker_other_backend_kwargs
         self._worker_commit_prompt = worker_commit_prompt
+        self._worker_commit_prompt_addon = worker_commit_prompt_addon
+        self._worker_prompt_preset = worker_prompt_preset
+        self._sub_llm_system_prompt = sub_llm_system_prompt
 
         # Logger for hierarchical logging (passed to nested workers)
         self._logger = logger
@@ -256,6 +290,25 @@ class LocalREPL(NonIsolatedEnv):
             # store_mode="none" - no store exposed (benchmark mode)
             self.store = None
 
+    def reset_shared_store(self, shared_store: SharedStore | None = None) -> None:
+        """Reset the shared store for a new completion (persistent mode)."""
+        if self._store_mode != "shared":
+            return
+
+        self._shared_store = shared_store or SharedStore()
+        self._worker_id = f"worker_{self.depth}_{uuid.uuid4().hex[:6]}"
+        self.store = WorkerStoreProxy(self._shared_store, self._worker_id)
+        self.store.set_llm_batch_fn(self._llm_query_batched)
+        self.globals["store"] = self.store
+        self.globals["SpanRef"] = SpanRef
+
+        # Ensure commit helpers remain available
+        self.globals["rlm_worker"] = self._rlm_worker
+        self.globals["rlm_worker_batched"] = self._rlm_worker_batched
+        self.globals["parse_commit"] = parse_commit
+        self.globals["apply_commit"] = self._apply_commit
+        self.globals["Commit"] = Commit
+
     def _final_var(self, variable_name_or_value: str) -> str:
         """Return a final answer, either by variable name or direct value.
 
@@ -266,13 +319,22 @@ class LocalREPL(NonIsolatedEnv):
         Prints FINAL(value) to stdout so the parser can detect it,
         even when called inside code blocks.
         """
-        arg = str(variable_name_or_value).strip().strip("\"'")
+        if not isinstance(variable_name_or_value, str):
+            value = str(variable_name_or_value)
+            print(f"FINAL({value})")
+            return value
+
+        arg = variable_name_or_value.strip().strip("\"'")
 
         # First, check if it's a variable name in locals
         if arg in self.locals:
             value = str(self.locals[arg])
             print(f"FINAL({value})")
             return value
+
+        # If it looks like an identifier but isn't defined, raise to avoid false answers
+        if re.match(r"^[A-Za-z_]\w*$", arg):
+            raise NameError(f"Variable '{arg}' not found")
 
         # Otherwise, treat the argument itself as the final answer
         # This handles FINAL_VAR(result) where result='1,2,5,10'
@@ -303,11 +365,25 @@ class LocalREPL(NonIsolatedEnv):
         """List all context files available in the working directory.
 
         Returns a list of filenames (not full paths) that can be read with read_file().
+        Also prints the list for immediate visibility in REPL output.
         """
+        files = self._get_file_list()
+
+        # Auto-print for REPL usability (model often forgets to print)
+        print(f"Available files ({len(files)} total):")
+        for f in files[:20]:  # Show first 20
+            print(f"  {f}")
+        if len(files) > 20:
+            print(f"  ... and {len(files) - 20} more")
+        return files
+
+    def _get_file_list(self) -> list[str]:
+        """Internal helper to list files without emitting stdout."""
+        if self._context_files:
+            return sorted(self._context_files)
         files = []
         for f in os.listdir(self.temp_dir):
-            # Include text and json files, exclude hidden files
-            if not f.startswith(".") and (f.endswith(".txt") or f.endswith(".json")):
+            if not f.startswith("."):
                 files.append(f)
         return sorted(files)
 
@@ -321,7 +397,13 @@ class LocalREPL(NonIsolatedEnv):
             The file contents as a string (JSON files are returned as formatted JSON string)
         """
         # Security: only allow reading from temp_dir
-        filepath = os.path.join(self.temp_dir, os.path.basename(filename))
+        if filename in self._context_file_map:
+            safe_name = self._context_file_map[filename]
+        else:
+            safe_name = os.path.basename(filename)
+        filepath = os.path.join(self.temp_dir, safe_name)
+        if self._context_files and safe_name not in self._context_files:
+            raise FileNotFoundError(f"File not found: {filename}")
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"File not found: {filename}")
 
@@ -412,10 +494,11 @@ class LocalREPL(NonIsolatedEnv):
             # Create nested RLM
             worker_system_prompt = self._worker_system_prompt
             if self._worker_commit_prompt:
+                commit_addon = self._worker_commit_prompt_addon or COMMIT_PROTOCOL_PROMPT_ADDON
                 if worker_system_prompt:
-                    worker_system_prompt = worker_system_prompt + "\n" + COMMIT_PROTOCOL_PROMPT_ADDON
+                    worker_system_prompt = worker_system_prompt + "\n" + commit_addon
                 else:
-                    worker_system_prompt = COMMIT_PROTOCOL_PROMPT_ADDON
+                    worker_system_prompt = commit_addon
 
             # Prepare environment kwargs, passing shared_store if available
             env_kwargs = self._worker_environment_kwargs.copy()
@@ -436,6 +519,7 @@ class LocalREPL(NonIsolatedEnv):
                     "max_iterations", self._worker_max_iterations or 2
                 ),
                 custom_system_prompt=worker_system_prompt,
+                prompt_preset=self._worker_prompt_preset,
                 other_backends=self._worker_other_backends,
                 other_backend_kwargs=self._worker_other_backend_kwargs,
                 verbose=False,
@@ -537,12 +621,20 @@ class LocalREPL(NonIsolatedEnv):
 
         return result
 
-    def _llm_query(self, prompt: str, model: str | None = None) -> str:
+    def _llm_query(
+        self,
+        prompt: str | dict[str, Any] | list[dict[str, Any]],
+        model: str | None = None,
+        output_format: str | None = None,
+        system_prompt: str | None = None,
+    ) -> str:
         """Query the LM via socket connection to the handler.
 
         Args:
             prompt: The prompt to send to the LM.
             model: Optional model name to use (if handler has multiple clients).
+            output_format: Optional desired output format for the sub-LLM.
+            system_prompt: Optional additional system instructions for the sub-LLM.
         """
         # Enforce subcall budget
         self._subcall_count += 1
@@ -553,13 +645,10 @@ class LocalREPL(NonIsolatedEnv):
             return "Error: No LM handler configured"
 
         try:
-            if len(prompt) > self.sub_llm_max_chars:
-                original_len = len(prompt)
-                prompt = (
-                    f"[TRUNCATED_INPUT original_chars={original_len} max_chars={self.sub_llm_max_chars}]\n"
-                    + prompt[: self.sub_llm_max_chars]
-                )
-            request = LMRequest(prompt=prompt, model=model, depth=self.depth)
+            prepared_prompt = self._prepare_sub_llm_prompt(
+                prompt, output_format=output_format, system_prompt=system_prompt
+            )
+            request = LMRequest(prompt=prepared_prompt, model=model, depth=self.depth)
             response = send_lm_request(self.lm_handler_address, request)
 
             if not response.success:
@@ -574,31 +663,41 @@ class LocalREPL(NonIsolatedEnv):
         except Exception as e:
             return f"Error: LM query failed - {e}"
 
-    def _llm_query_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
+    def _llm_query_batched(
+        self,
+        prompts: list[str | dict[str, Any] | list[dict[str, Any]]],
+        model: str | None = None,
+        output_format: str | None = None,
+        system_prompt: str | None = None,
+    ) -> list[str]:
         """Query the LM with multiple prompts concurrently.
 
         Args:
             prompts: List of prompts to send to the LM.
             model: Optional model name to use (if handler has multiple clients).
+            output_format: Optional desired output format for the sub-LLM.
+            system_prompt: Optional additional system instructions for the sub-LLM.
 
         Returns:
             List of responses in the same order as input prompts.
         """
+        # Enforce subcall budget (counts each prompt in the batch)
+        self._subcall_count += len(prompts)
+        if self._subcall_count > self.subcall_budget:
+            return [f"Error: Subcall budget exceeded ({self.subcall_budget})"] * len(prompts)
+
         if not self.lm_handler_address:
             return ["Error: No LM handler configured"] * len(prompts)
 
         try:
-            truncated_prompts: list[str] = []
-            for prompt in prompts:
-                if len(prompt) > self.sub_llm_max_chars:
-                    original_len = len(prompt)
-                    prompt = (
-                        f"[TRUNCATED_INPUT original_chars={original_len} max_chars={self.sub_llm_max_chars}]\n"
-                        + prompt[: self.sub_llm_max_chars]
-                    )
-                truncated_prompts.append(prompt)
+            prepared_prompts = [
+                self._prepare_sub_llm_prompt(
+                    p, output_format=output_format, system_prompt=system_prompt
+                )
+                for p in prompts
+            ]
             responses = send_lm_request_batched(
-                self.lm_handler_address, truncated_prompts, model=model, depth=self.depth
+                self.lm_handler_address, prepared_prompts, model=model, depth=self.depth
             )
 
             results = []
@@ -614,20 +713,78 @@ class LocalREPL(NonIsolatedEnv):
         except Exception as e:
             return [f"Error: LM query failed - {e}"] * len(prompts)
 
+    def _prepare_sub_llm_prompt(
+        self,
+        prompt: str | dict[str, Any] | list[dict[str, Any]],
+        output_format: str | None = None,
+        system_prompt: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Prepare sub-LLM prompt with a default system preamble."""
+        if isinstance(prompt, str):
+            if len(prompt) > self.sub_llm_max_chars:
+                original_len = len(prompt)
+                prompt = (
+                    f"[TRUNCATED_INPUT original_chars={original_len} max_chars={self.sub_llm_max_chars}]\n"
+                    + prompt[: self.sub_llm_max_chars]
+                )
+            messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        elif isinstance(prompt, dict) and "role" in prompt:
+            messages = [prompt]
+        elif isinstance(prompt, list) and all(isinstance(item, dict) for item in prompt):
+            messages = prompt
+        else:
+            raise ValueError("llm_query expects a string or list of message dicts")
+
+        system_contents: list[str] = []
+        non_system: list[dict[str, Any]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                content = str(msg.get("content", "")).strip()
+                if content:
+                    system_contents.append(content)
+            else:
+                non_system.append(msg)
+
+        base_system = self._sub_llm_system_prompt
+        combined = base_system or ""
+        if system_prompt:
+            system_contents.append(system_prompt)
+        if output_format:
+            system_contents.append(
+                "Desired output format: "
+                + output_format
+                + ". If this specifies JSON, output raw JSON only (no code fences)."
+            )
+        for content in system_contents:
+            if content and content not in combined:
+                combined = combined + ("\n\n" if combined else "") + content
+
+        if combined:
+            return [{"role": "system", "content": combined}] + non_system
+        return non_system
+
     def load_context(self, context_payload: dict | list | str):
         """Load context into the environment.
 
-        If context_payload is a dict with string keys that look like filenames (contain '.'),
-        it's treated as a files dict and loaded via load_files().
+        If context_payload is a dict with string keys that look like filenames
+        (known extensions), it's treated as a files dict and loaded via load_files().
         Otherwise, it's loaded as context_0 (and 'context' alias).
         """
         # Check if this looks like a files dict (keys are filenames)
         if isinstance(context_payload, dict):
-            keys = list(context_payload.keys())
-            if keys and all(isinstance(k, str) and "." in k for k in keys):
-                # Treat as files dict
-                self.load_files(context_payload)
+            if "__files__" in context_payload and isinstance(context_payload["__files__"], dict):
+                self.load_files(context_payload["__files__"])
                 return
+            keys = list(context_payload.keys())
+            if keys and all(isinstance(k, str) for k in keys):
+                all_have_ext = all(os.path.splitext(k)[1] for k in keys)
+                any_known_ext = any(
+                    os.path.splitext(k)[1].lower() in _FILE_CONTEXT_EXTENSIONS for k in keys
+                )
+                if all_have_ext and any_known_ext:
+                    # Treat as files dict
+                    self.load_files(context_payload)
+                    return
 
         # Default behavior: load as single context
         self.add_context(context_payload, 0)
@@ -637,6 +794,7 @@ class LocalREPL(NonIsolatedEnv):
 
         Each key becomes a filename, each value becomes the file content.
         Files are accessible via list_files() and read_file().
+        Nested paths like 'cli/train.py' become 'cli__train.py'.
 
         Args:
             files: Dict mapping filename -> content (string or JSON-serializable)
@@ -648,11 +806,23 @@ class LocalREPL(NonIsolatedEnv):
                 "metadata.json": {"total_facts": 20, "source": "benchmark"}
             })
         """
+        self._context_files = set()
+        self._context_file_map = {}
         for filename, content in files.items():
-            # Sanitize filename
-            safe_name = os.path.basename(filename)
+            # Sanitize filename - replace path separators with __
+            safe_name = filename.replace("/", "__").replace("\\", "__")
+            # Remove any remaining dangerous characters
+            safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._-")
             if not safe_name:
                 continue
+            base, ext = os.path.splitext(safe_name)
+            if safe_name in self._context_files:
+                counter = 1
+                candidate = f"{base}__dup{counter}{ext}"
+                while candidate in self._context_files:
+                    counter += 1
+                    candidate = f"{base}__dup{counter}{ext}"
+                safe_name = candidate
 
             filepath = os.path.join(self.temp_dir, safe_name)
 
@@ -663,10 +833,15 @@ class LocalREPL(NonIsolatedEnv):
                 # JSON-serialize dicts/lists
                 with open(filepath, "w") as f:
                     json.dump(content, f, indent=2)
+            self._context_files.add(safe_name)
+            self._context_file_map[filename] = safe_name
 
         # Also set 'context' to be a summary of available files for convenience
-        file_list = self._list_files()
-        self.locals["context"] = f"Files available: {file_list}. Use list_files() and read_file(name) to access."
+        file_list = self._get_file_list()
+        self.locals["context"] = (
+            "Files available (listed names use '__' for path separators; original paths also accepted): "
+            f"{file_list}. Use list_files() and read_file(name) to access."
+        )
         self._context_count = len(files)
 
     def add_context(
@@ -699,6 +874,7 @@ class LocalREPL(NonIsolatedEnv):
             self.execute_code(
                 f"import json\nwith open(r'{context_path}', 'r') as f:\n    {var_name} = json.load(f)"
             )
+        self._context_files.add(os.path.basename(context_path))
 
         # Alias context_0 as 'context' for backward compatibility
         if context_index == 0:
@@ -770,7 +946,12 @@ class LocalREPL(NonIsolatedEnv):
             os.chdir(old_cwd)
 
     def execute_code(self, code: str) -> REPLResult:
-        """Execute code in the persistent namespace and return result."""
+        """Execute code in the persistent namespace and return result.
+
+        Like Python interactive REPL, automatically prints the value of the
+        last expression if it's not None. This helps models see results without
+        explicitly calling print().
+        """
         start_time = time.perf_counter()
 
         # Clear pending calls from previous execution
@@ -787,7 +968,34 @@ class LocalREPL(NonIsolatedEnv):
         with self._capture_output() as (stdout_buf, stderr_buf), self._temp_cwd():
             try:
                 combined = {**self.globals, **self.locals}
-                exec(code, combined, combined)
+
+                # Parse code to separate statements from final expression
+                # This enables auto-printing last expression like Python REPL
+                try:
+                    tree = ast.parse(code, mode='exec')
+                    last_expr_value = None
+
+                    if tree.body and isinstance(tree.body[-1], ast.Expr):
+                        # Last statement is an expression - evaluate it separately
+                        *stmts, last_expr = tree.body
+                        if stmts:
+                            exec(compile(ast.Module(body=stmts, type_ignores=[]), '<repl>', 'exec'), combined, combined)
+                        # Evaluate last expression
+                        last_expr_value = eval(compile(ast.Expression(body=last_expr.value), '<repl>', 'eval'), combined, combined)
+                        # Auto-print if non-None (like Python REPL)
+                        if last_expr_value is not None:
+                            # Use repr for clean output, but truncate very long values
+                            repr_val = repr(last_expr_value)
+                            if len(repr_val) > 5000:
+                                repr_val = repr_val[:5000] + "... [truncated]"
+                            print(repr_val)
+                    else:
+                        # No trailing expression, just exec everything
+                        exec(code, combined, combined)
+
+                except SyntaxError:
+                    # Fall back to plain exec on syntax issues
+                    exec(code, combined, combined)
 
                 # Update locals with new variables
                 for key, value in combined.items():

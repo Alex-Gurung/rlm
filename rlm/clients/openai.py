@@ -28,6 +28,7 @@ class OpenAIClient(BaseLM):
         model_name: str | None = None,
         base_url: str | None = None,
         max_tokens: int | None = None,
+        timeout: float | None = None,
         **kwargs,
     ):
         super().__init__(model_name=model_name, **kwargs)
@@ -41,10 +42,12 @@ class OpenAIClient(BaseLM):
                 api_key = DEFAULT_VERCEL_API_KEY
 
         # For vLLM, set base_url to local vLLM server address.
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
-        self.async_client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        # timeout is in seconds (None = no timeout)
+        self.client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        self.async_client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.model_name = model_name
         self.max_tokens = max_tokens
+        self.timeout = timeout
 
         # Per-model usage tracking
         self.model_call_counts: dict[str, int] = defaultdict(int)

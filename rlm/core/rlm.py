@@ -21,8 +21,10 @@ from rlm.utils.parsing import (
     format_iteration,
 )
 from rlm.utils.prompts import (
+    COMMIT_PROTOCOL_PROMPT_ADDON,
     RLM_SYSTEM_PROMPT,
     STORE_PROMPT_ADDON,
+    SUB_LLM_SYSTEM_PROMPT,
     QueryMetadata,
     build_rlm_system_prompt,
     build_user_prompt,
@@ -48,6 +50,7 @@ class RLM:
         max_depth: int = 1,
         max_iterations: int = 30,
         custom_system_prompt: str | None = None,
+        prompt_preset: str = "default",
         other_backends: list[ClientBackend] | None = None,
         other_backend_kwargs: list[dict[str, Any]] | None = None,
         logger: RLMLogger | None = None,
@@ -55,6 +58,8 @@ class RLM:
         persistent: bool = False,
         store_mode: str = "shared",
         task_name: str | None = None,
+        llm_timeout: float | None = 120.0,
+        max_output_tokens: int | None = 8192,
     ):
         """
         Args:
@@ -66,6 +71,7 @@ class RLM:
             max_depth: The maximum depth of the RLM. Currently, only depth 1 is supported.
             max_iterations: The maximum number of iterations of the RLM.
             custom_system_prompt: The custom system prompt to use for the RLM.
+            prompt_preset: "default" (current prompt set) or "legacy" (baseline prompts).
             other_backends: A list of other client backends that the environments can use to make sub-calls.
             other_backend_kwargs: The kwargs to pass to the other client backends (ordered to match other_backends).
             logger: The logger to use for the RLM.
@@ -73,10 +79,21 @@ class RLM:
             persistent: If True, reuse the environment across completion() calls for multi-turn conversations.
             store_mode: "shared" (default) uses SharedStore with full prompt, "none" disables store for benchmarking.
             task_name: Optional task name for logging/visualization.
+            llm_timeout: Timeout in seconds for each LLM call. Default 120s. Set to None to disable.
+            max_output_tokens: Maximum tokens per LLM response. Default 8192. Prevents runaway generation.
         """
         # Store config for spawning per-completion
         self.backend = backend
-        self.backend_kwargs = backend_kwargs
+        self.llm_timeout = llm_timeout
+        self.max_output_tokens = max_output_tokens
+
+        # Merge timeout and max_tokens into backend_kwargs
+        self.backend_kwargs = backend_kwargs.copy() if backend_kwargs else {}
+        if llm_timeout is not None:
+            self.backend_kwargs.setdefault("timeout", llm_timeout)
+        if max_output_tokens is not None:
+            self.backend_kwargs.setdefault("max_tokens", max_output_tokens)
+
         self.environment_type = environment
         self.environment_kwargs = (
             environment_kwargs.copy() if environment_kwargs is not None else {}
@@ -90,18 +107,60 @@ class RLM:
                 )
 
         self.other_backends = other_backends
-        self.other_backend_kwargs = other_backend_kwargs
+        # Apply same timeout/max_tokens defaults to other backends
+        if other_backend_kwargs:
+            self.other_backend_kwargs = []
+            for kwargs in other_backend_kwargs:
+                merged = kwargs.copy() if kwargs else {}
+                if llm_timeout is not None:
+                    merged.setdefault("timeout", llm_timeout)
+                if max_output_tokens is not None:
+                    merged.setdefault("max_tokens", max_output_tokens)
+                self.other_backend_kwargs.append(merged)
+        else:
+            self.other_backend_kwargs = other_backend_kwargs
 
         self.depth = depth
         self.max_depth = max_depth
         self.max_iterations = max_iterations
         self.store_mode = store_mode
         self.task_name = task_name
+        self.prompt_preset = prompt_preset
+
+        preset = (prompt_preset or "default").lower()
+        if preset not in {"default", "legacy"}:
+            raise ValueError(f"Unknown prompt_preset: {prompt_preset}")
+
+        if preset == "legacy":
+            from rlm.utils.prompts_legacy import (
+                COMMIT_PROTOCOL_PROMPT_ADDON_LEGACY,
+                RLM_SYSTEM_PROMPT_LEGACY,
+                STORE_PROMPT_ADDON_LEGACY,
+                SUB_LLM_SYSTEM_PROMPT_LEGACY,
+                build_rlm_system_prompt_legacy,
+                build_user_prompt_legacy,
+            )
+
+            self._build_user_prompt_fn = build_user_prompt_legacy
+            self._build_system_prompt_fn = build_rlm_system_prompt_legacy
+            self._commit_prompt_addon = COMMIT_PROTOCOL_PROMPT_ADDON_LEGACY
+            self._sub_llm_system_prompt = SUB_LLM_SYSTEM_PROMPT_LEGACY
+            base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT_LEGACY
+            store_prompt_addon = STORE_PROMPT_ADDON_LEGACY
+        else:
+            self._build_user_prompt_fn = build_user_prompt
+            self._build_system_prompt_fn = build_rlm_system_prompt
+            self._commit_prompt_addon = COMMIT_PROTOCOL_PROMPT_ADDON
+            self._sub_llm_system_prompt = SUB_LLM_SYSTEM_PROMPT
+            base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
+            store_prompt_addon = STORE_PROMPT_ADDON
 
         # Build system prompt with optional addons
-        base_prompt = custom_system_prompt if custom_system_prompt else RLM_SYSTEM_PROMPT
         if store_mode == "shared":
-            self.system_prompt = base_prompt + STORE_PROMPT_ADDON
+            if store_prompt_addon and store_prompt_addon in base_prompt:
+                self.system_prompt = base_prompt
+            else:
+                self.system_prompt = base_prompt + store_prompt_addon
         else:
             self.system_prompt = base_prompt
 
@@ -136,6 +195,7 @@ class RLM:
                 if environment_kwargs
                 else {},
                 other_backends=other_backends,
+                prompt_preset=self.prompt_preset,
             )
             if self.logger:
                 self.logger.log_metadata(metadata)
@@ -178,6 +238,15 @@ class RLM:
                     f"This should have been caught at initialization."
                 )
             environment.update_handler_address((lm_handler.host, lm_handler.port))
+            if self.store_mode == "shared":
+                if hasattr(environment, "reset_shared_store"):
+                    from rlm.core.shared_store import SharedStore
+                    self._shared_store = SharedStore()
+                    environment.reset_shared_store(self._shared_store)
+                else:
+                    raise RuntimeError(
+                        "Persistent environments with store_mode='shared' must support reset_shared_store()."
+                    )
             environment.add_context(prompt)
         else:
             env_kwargs = self.environment_kwargs.copy()
@@ -198,6 +267,9 @@ class RLM:
 
             # Pass store_mode to environment
             env_kwargs["store_mode"] = self.store_mode
+            env_kwargs["worker_commit_prompt_addon"] = self._commit_prompt_addon
+            env_kwargs["worker_prompt_preset"] = self.prompt_preset
+            env_kwargs["sub_llm_system_prompt"] = self._sub_llm_system_prompt
 
             # Create shared store for local environments when store_mode="shared"
             if self.store_mode == "shared" and self.environment_type == "local":
@@ -224,7 +296,7 @@ class RLM:
         up the initial message history.
         """
         metadata = QueryMetadata(prompt)
-        message_history = build_rlm_system_prompt(
+        message_history = self._build_system_prompt_fn(
             system_prompt=self.system_prompt, query_metadata=metadata
         )
 
@@ -268,7 +340,7 @@ class RLM:
                     else 0
                 )
                 current_prompt = message_history + [
-                    build_user_prompt(root_prompt, i, context_count, history_count)
+                    self._build_user_prompt_fn(root_prompt, i, context_count, history_count)
                 ]
 
                 iteration: RLMIteration = self._completion_turn(

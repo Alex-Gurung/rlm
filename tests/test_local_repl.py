@@ -135,10 +135,11 @@ class TestLocalREPLHelpers:
         repl.cleanup()
 
     def test_final_var_missing(self):
-        """Test FINAL_VAR with non-existent variable."""
+        """Test FINAL_VAR with non-existent variable raises NameError."""
         repl = LocalREPL()
-        _ = repl.execute_code("result = FINAL_VAR('nonexistent')")
-        assert "Error" in repl.locals["result"]
+        result = repl.execute_code("result = FINAL_VAR('nonexistent')")
+        # Error goes to stderr as NameError
+        assert "NameError" in result.stderr or "not found" in result.stderr
         repl.cleanup()
 
     def test_llm_query_no_handler(self):
@@ -146,6 +147,19 @@ class TestLocalREPLHelpers:
         repl = LocalREPL()
         _ = repl.execute_code("response = llm_query('test')")
         assert "Error" in repl.locals["response"]
+        repl.cleanup()
+
+    def test_sub_llm_prompt_output_format(self):
+        repl = LocalREPL()
+        messages = repl._prepare_sub_llm_prompt("hello", output_format="json")
+        assert messages[0]["role"] == "system"
+        assert "Desired output format: json" in messages[0]["content"]
+        repl.cleanup()
+
+    def test_llm_query_batched_budget_enforced(self):
+        repl = LocalREPL(subcall_budget=2)
+        responses = repl._llm_query_batched(["a", "b", "c"])
+        assert all("Subcall budget exceeded" in r for r in responses)
         repl.cleanup()
 
 
@@ -172,6 +186,49 @@ class TestLocalREPLContext:
         repl = LocalREPL(context_payload=[1, 2, 3, "four"])
         assert "context" in repl.locals
         assert repl.locals["context"] == [1, 2, 3, "four"]
+        repl.cleanup()
+
+
+class TestLocalREPLFileContext:
+    """Tests for file-based context loading and access helpers."""
+
+    def test_file_dict_context_detected(self):
+        repl = LocalREPL(
+            context_payload={
+                "a.py": "print('hi')",
+                "nested/dir/b.txt": "hello",
+            }
+        )
+        assert isinstance(repl.locals.get("context"), str)
+        assert "Files available" in repl.locals.get("context", "")
+
+        repl.execute_code("files = list_files()")
+        files = repl.locals.get("files", [])
+        assert "a.py" in files
+        assert "nested__dir__b.txt" in files
+
+        repl.execute_code("content_a = read_file('a.py')")
+        repl.execute_code("content_b = read_file('nested/dir/b.txt')")
+        assert repl.locals.get("content_a") == "print('hi')"
+        assert repl.locals.get("content_b") == "hello"
+        repl.cleanup()
+
+    def test_file_name_collision_gets_disambiguated(self):
+        repl = LocalREPL(
+            context_payload={
+                "a/b.txt": "first",
+                "a__b.txt": "second",
+            }
+        )
+        repl.execute_code("files = list_files()")
+        files = repl.locals.get("files", [])
+        # Expect two distinct entries
+        assert len([f for f in files if f.startswith("a__b") and f.endswith(".txt")]) == 2
+
+        repl.execute_code("content_first = read_file('a/b.txt')")
+        repl.execute_code("content_second = read_file('a__b.txt')")
+        assert repl.locals.get("content_first") == "first"
+        assert repl.locals.get("content_second") == "second"
         repl.cleanup()
 
 

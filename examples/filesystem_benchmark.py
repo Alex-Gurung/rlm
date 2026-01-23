@@ -5,7 +5,7 @@ Filesystem benchmark for RLM behavior on codebases.
 This is a lightweight, CodeQA-like benchmark that:
 - Serializes a codebase into context
 - Generates file-path retrieval tasks from regex patterns
-- Evaluates baseline vs store_prompt suggestion
+- Evaluates baseline vs store-enabled suggestion
 - Logs metrics (subcalls, batch calls, store events, worker spawns)
 
 Usage:
@@ -280,7 +280,8 @@ def run_benchmark(
     file_list: list[str],
     log_dir: str,
     max_iterations: int,
-    store_prompt: bool,
+    store_enabled: bool,
+    prompt_preset: str,
     environment_kwargs: dict | None = None,
 ) -> RunResult:
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -295,11 +296,12 @@ def run_benchmark(
         max_iterations=max_iterations,
         logger=logger,
         verbose=True,
-        store_mode="shared" if store_prompt else "none",
+        store_mode="shared" if store_enabled else "none",
+        prompt_preset=prompt_preset,
         task_name=f"filesystem_benchmark/{name}",
     )
 
-    root_prompt = build_root_prompt(tasks, store_enabled=store_prompt)
+    root_prompt = build_root_prompt(tasks, store_enabled=store_enabled)
 
     start = time.perf_counter()
     result = rlm.completion(context, root_prompt=root_prompt)
@@ -318,7 +320,8 @@ def run_benchmark(
             max_iterations=max_iterations,
             logger=retry_logger,
             verbose=True,
-            store_mode="shared" if store_prompt else "none",
+            store_mode="shared" if store_enabled else "none",
+            prompt_preset=prompt_preset,
             task_name=f"filesystem_benchmark/{name}",
         )
         retry_prompt = (
@@ -405,6 +408,7 @@ def main() -> None:
     parser.add_argument("--store-only", action="store_true")
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--prompt-preset", default="default", choices=["default", "legacy"])
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -480,7 +484,8 @@ def main() -> None:
                 file_list=file_list,
                 log_dir=args.log_dir,
                 max_iterations=args.max_iterations,
-                store_prompt=False,
+                store_enabled=False,
+                prompt_preset=args.prompt_preset,
                 environment_kwargs={"setup_code": setup_code},
             )
         )
@@ -495,7 +500,8 @@ def main() -> None:
                 file_list=file_list,
                 log_dir=args.log_dir,
                 max_iterations=args.max_iterations,
-                store_prompt=True,
+                store_enabled=True,
+                prompt_preset=args.prompt_preset,
                 environment_kwargs={"setup_code": setup_code},
             )
         )

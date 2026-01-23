@@ -92,6 +92,7 @@ def run_benchmark(
     backend: str,
     backend_kwargs: dict,
     store_mode: str,
+    prompt_preset: str,
     context: str,
     question: str,
     log_dir: str,
@@ -120,6 +121,7 @@ def run_benchmark(
         logger=logger,
         verbose=True,
         store_mode=store_mode,
+        prompt_preset=prompt_preset,
     )
 
     prompt = f"{context}\n\n---\n\nQuestion: {question}"
@@ -215,7 +217,7 @@ def print_comparison(baseline: dict, shared: dict) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Benchmark RLM store/batching")
     parser.add_argument("--backend", default="vllm", help="LLM backend (openai, vllm, etc.)")
-    parser.add_argument("--model", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8", help="Model name")
+    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8", help="Model name")
     parser.add_argument("--api-key", default=None, help="API key (or use env var)")
     parser.add_argument("--base-url", default=None, help="Base URL for vLLM/compatible APIs")
     parser.add_argument("--num-facts", type=int, default=20, help="Number of facts to generate")
@@ -224,6 +226,7 @@ def main():
     parser.add_argument("--mock", action="store_true", help="Run with mock data (no LLM)")
     parser.add_argument("--baseline-only", action="store_true", help="Only run baseline")
     parser.add_argument("--store-only", action="store_true", help="Only run store-enabled")
+    parser.add_argument("--prompt-preset", default="default", choices=["default", "legacy"])
     args = parser.parse_args()
 
     # Generate test data
@@ -266,6 +269,7 @@ def main():
             backend=args.backend,
             backend_kwargs=backend_kwargs,
             store_mode="none",
+            prompt_preset=args.prompt_preset,
             context=context,
             question=question,
             log_dir=args.log_dir,
@@ -283,6 +287,7 @@ def main():
             backend=args.backend,
             backend_kwargs=backend_kwargs,
             store_mode="shared",
+            prompt_preset=args.prompt_preset,
             context=context,
             question=question,
             log_dir=args.log_dir,

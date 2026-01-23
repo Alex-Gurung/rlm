@@ -31,11 +31,11 @@ def test_commit_protocol():
     print("TEST: Commit Protocol Integration")
     print("=" * 60)
 
-    # Create RLM with store_prompt enabled
+    # Create RLM with shared store enabled
     rlm = RLM(
         backend="vllm",
         backend_kwargs={
-            "model_name": "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8",
+            "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
             "base_url": os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
             "api_key": os.getenv("VLLM_API_KEY", "dummy"),
             "max_tokens": 2000,
@@ -44,7 +44,7 @@ def test_commit_protocol():
         max_depth=2,
         max_iterations=3,
         verbose=True,
-        store_prompt=True,
+        store_mode="shared",
         logger=RLMLogger(log_dir="visualizer/public/logs", file_name="commit_test"),
     )
 
@@ -103,7 +103,7 @@ def test_sub_llm_in_repl():
     rlm = RLM(
         backend="vllm",
         backend_kwargs={
-            "model_name": "Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8",
+            "model_name": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
             "base_url": os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1"),
             "api_key": os.getenv("VLLM_API_KEY", "dummy"),
             "max_tokens": 1500,
@@ -112,7 +112,7 @@ def test_sub_llm_in_repl():
         max_depth=2,
         max_iterations=3,
         verbose=True,
-        store_prompt=True,
+        store_mode="shared",
         logger=RLMLogger(log_dir="visualizer/public/logs", file_name="sub_llm_test"),
     )
 

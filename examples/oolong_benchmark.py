@@ -145,7 +145,8 @@ def parse_log_metrics(log_file: str) -> dict:
 def run_oolong(
     backend: str,
     backend_kwargs: dict,
-    store_prompt: bool,
+    store_enabled: bool,
+    prompt_preset: str,
     samples: list[dict],
     log_dir: str,
     max_iterations: int,
@@ -157,7 +158,7 @@ def run_oolong(
     from rlm import RLM
     from rlm.logger import RLMLogger
 
-    name = "store" if store_prompt else "baseline"
+    name = "store" if store_enabled else "baseline"
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logger = RLMLogger(log_dir=log_dir, file_name=f"oolong_{name}")
 
@@ -169,7 +170,8 @@ def run_oolong(
         max_iterations=max_iterations,
         logger=logger,
         verbose=verbose,
-        store_prompt=store_prompt,
+        store_mode="shared" if store_enabled else "none",
+        prompt_preset=prompt_preset,
     )
 
     correct = 0
@@ -267,8 +269,9 @@ def build_root_prompt(question: str, subagent_hint: bool, icl: bool) -> str:
         "Guidance for OOLONG-style transcripts:\n"
         "- The answer is almost never stated as an explicit total; you must compute it from the transcript.\n"
         "- The context uses episode delimiters like [START OF EPISODE] ... [END OF EPISODE].\n"
-        "- The instruction preface also contains these delimiter strings; ignore any 'episode' segment that is very short or lacks dialogue (e.g., no 'Name:' lines).\n"
-        "- Extract occurrences directly (e.g., speaker lines that mention the target), then aggregate in Python.\n"
+        "- The instruction preface also contains these delimiter strings; ignore any 'episode' segment that is very short or lacks dialogue.\n"
+        "- Dialogue lines are formatted as '<Speaker>: <utterance>' (e.g., 'Matt: ...'); do NOT require a literal 'Name:' prefix.\n"
+        "- Extract occurrences directly from speaker lines that mention the target, then aggregate in Python.\n"
         "- Do NOT count raw keyword frequencies (e.g., every 'magic' or 'spell'); count only explicit casting events.\n"
         "- Prefer patterns like \"Name: I cast <Spell>\" or \"<Name> casts <Spell>\"; ignore generic mentions.\n"
         "- Do NOT stop at a small sample; process all real episodes after filtering placeholders.\n"
@@ -308,7 +311,7 @@ def main() -> None:
     parser.add_argument("--config", default="dnd")
     parser.add_argument("--split", default="test")
     parser.add_argument("--backend", default="vllm")
-    parser.add_argument("--model", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8")
+    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--num-items", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -321,6 +324,7 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=8000)
     parser.add_argument("--subagent-hint", action="store_true")
     parser.add_argument("--icl", action="store_true")
+    parser.add_argument("--prompt-preset", default="default", choices=["default", "legacy"])
     args = parser.parse_args()
 
     disable_progress_bar()
@@ -353,13 +357,14 @@ def main() -> None:
 
     if not args.store_only:
         print("\n" + "=" * 60)
-        print("Running BASELINE (store_prompt=False)")
+        print("Running BASELINE (store_mode='none')")
         print("=" * 60)
         results.append(
             run_oolong(
                 args.backend,
                 backend_kwargs,
                 False,
+                args.prompt_preset,
                 samples,
                 args.log_dir,
                 args.max_iterations,
@@ -372,13 +377,14 @@ def main() -> None:
 
     if not args.baseline_only:
         print("\n" + "=" * 60)
-        print("Running STORE-ENABLED (store_prompt=True)")
+        print("Running STORE-ENABLED (store_mode='shared')")
         print("=" * 60)
         results.append(
             run_oolong(
                 args.backend,
                 backend_kwargs,
                 True,
+                args.prompt_preset,
                 samples,
                 args.log_dir,
                 args.max_iterations,

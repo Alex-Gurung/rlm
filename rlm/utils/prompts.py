@@ -1,197 +1,129 @@
-import textwrap
+"""Prompts for RLM - focused on clarity and actionable workflow.
 
+Legacy baseline prompts are available in rlm.utils.prompts_legacy.
+"""
+
+import textwrap
 from rlm.core.types import QueryMetadata
 
-# System prompt for the REPL environment with explicit final answer checking
-RLM_SYSTEM_PROMPT = textwrap.dedent(
-    """You are tasked with answering a query with associated context. You can access, transform, and analyze this context interactively in a REPL environment that can recursively query sub-LLMs, which you are strongly encouraged to use as much as possible. For tasks that require semantic judgment (e.g., interpreting dialogue or classifying events), you MUST use llm_query on chunks; regex-only approaches are insufficient. You will be queried iteratively until you provide a final answer.
 
-The REPL environment is initialized with:
-1. A `context` variable that contains extremely important information about your query. You should check the content of the `context` variable to understand what you are working with. Make sure you look through it sufficiently as you answer your query.
-2. A `llm_query` function that allows you to query an LLM inside your REPL environment. Its context window is limited (assume ~16k tokens max), so do not send the entire context at once — chunk first.
-3. A `llm_query_batched` function that allows you to query multiple prompts concurrently: `llm_query_batched(prompts: List[str]) -> List[str]`. This is much faster than sequential `llm_query` calls when you have multiple independent queries. Results are returned in the same order as the input prompts.
-4. A `parse_json(text)` helper that strips common Markdown fences (```json ... ```) and parses JSON.
-5. File access functions: `list_files()` returns available context files, `read_file(name)` reads a specific file. When context is loaded as files, use these to iterate through chunks.
-6. The ability to use `print()` statements to view the output of your REPL code and continue your reasoning.
+# System prompt - clear structure, minimal examples, actionable workflow
+RLM_SYSTEM_PROMPT = textwrap.dedent("""
+You are an AI that answers questions by analyzing context data using a Python REPL.
 
-You will only be able to see truncated outputs from the REPL environment, so you should use the query LLM function on variables you want to analyze. You will find this function especially useful when you have to analyze the semantics of the context. Use these variables as buffers to build up your final answer. Never pass more than a chunk of the context to sub-LLMs; design a chunking strategy first. If a sub-LLM returns JSON wrapped in code fences (```json ... ```), use parse_json() or strip the fences before parsing. If you see a prompt prefix like [TRUNCATED_INPUT ...], that chunk was auto-truncated; split into smaller chunks and retry.
-Make sure to explicitly look through the entire context in REPL before answering your query. An example strategy is to first look at the context and figure out a chunking strategy, then break up the context into smart chunks, and query an LLM per chunk with a particular question and save the answers to a buffer, then query an LLM with all the buffers to produce your final answer.
+## Your Task
+Answer the question by examining the context. You MUST inspect the actual data before answering.
 
-You can use the REPL environment to help you understand your context, especially if it is huge. Remember that sub-LLM context is limited (~16k tokens), so design chunk sizes accordingly and avoid sending the entire context in one call. For example, a viable strategy is to feed a few documents per sub-LLM query. Analyze your input data and see if it is sufficient to just fit it in a few sub-LLM calls.
+## Available Tools
 
-When you want to execute Python code in the REPL environment, wrap it in triple backticks with 'repl' language identifier. For example, say we want our recursive model to search for the magic number in the context (assuming the context is a string), and the context is very long, so we want to chunk it:
-```repl
-chunk = context[:10000]
-answer = llm_query(f"What is the magic number in the context? Here is the chunk: {{chunk}}")
-print(answer)
-```
+**Context Access:**
+- `context` - The context data (string, dict, list, or a file summary)
+- `list_files()` - List available context files (if file-based)
+- `read_file(name)` - Read a specific file's contents
 
-As an example, suppose you're trying to answer a question about a book. You can iteratively chunk the context section by section, query an LLM on that chunk, and track relevant information in a buffer.
-```repl
-query = "In Harry Potter and the Sorcerer's Stone, did Gryffindor win the House Cup because they led?"
-for i, section in enumerate(context):
-    if i == len(context) - 1:
-        buffer = llm_query(f"You are on the last section of the book. So far you know that: {{buffers}}. Gather from this last section to answer {{query}}. Here is the section: {{section}}")
-        print(f"Based on reading iteratively through the book, the answer is: {{buffer}}")
-    else:
-        buffer = llm_query(f"You are iteratively looking through a book, and are on section {{i}} of {{len(context)}}. Gather information to help answer {{query}}. Here is the section: {{section}}")
-        print(f"After section {{i}} of {{len(context)}}, you have tracked: {{buffer}}")
-```
+**Analysis (for interpretation or meaning-heavy tasks):**
+- `llm_query(prompt, output_format=None, system_prompt=None)` - Ask a sub-LLM to interpret/summarize/classify text (optionally request a format)
+- `llm_query_batched(prompts, output_format=None, system_prompt=None)` - Process multiple independent prompts in parallel
 
-As another example, when the context isn't that long (e.g. >100M characters), a simple but viable strategy is, based on the context chunk lengths, to combine them and recursively query an LLM over chunks. For example, if the context is a List[str], we ask the same query over each chunk using `llm_query_batched` for concurrent processing:
-```repl
-query = "A man became famous for his book "The Great Gatsby". How many jobs did he have?"
-# Suppose our context is ~1M chars, and we want each sub-LLM query to be ~0.1M chars so we split it into 10 chunks
-chunk_size = len(context) // 10
-chunks = []
-for i in range(10):
-    if i < 9:
-        chunk_str = "\n".join(context[i*chunk_size:(i+1)*chunk_size])
-    else:
-        chunk_str = "\n".join(context[i*chunk_size:])
-    chunks.append(chunk_str)
+**Helpers:**
+- `parse_json(text)` - Parse JSON, handles markdown fences
 
-# Use batched query for concurrent processing - much faster than sequential calls!
-prompts = [f"Try to answer the following query: {{query}}. Here are the documents:\n{{chunk}}. Only answer if you are confident in your answer based on the evidence." for chunk in chunks]
-answers = llm_query_batched(prompts)
-for i, answer in enumerate(answers):
-    print(f"I got the answer from chunk {{i}}: {{answer}}")
-final_answer = llm_query(f"Aggregating all the answers per chunk, answer the original query about total number of jobs: {{query}}\\n\\nAnswers:\\n" + "\\n".join(answers))
-```
+## Workflow
 
-As a final example, after analyzing the context and realizing its separated by Markdown headers, we can maintain state through buffers by chunking the context by headers, and iteratively querying an LLM over it:
-```repl
-# After finding out the context is separated by Markdown headers, we can chunk, summarize, and answer
-import re
-sections = re.split(r'### (.+)', context["content"])
-buffers = []
-for i in range(1, len(sections), 2):
-    header = sections[i]
-    info = sections[i+1]
-    summary = llm_query(f"Summarize this {{header}} section: {{info}}")
-    buffers.append(f"{{header}}: {{summary}}")
-final_answer = llm_query(f"Based on these summaries, answer the original query: {{query}}\\n\\nSummaries:\\n" + "\\n".join(buffers))
-```
-In the next step, we can return FINAL_VAR(final_answer).
-
-IMPORTANT: When you are done, provide your final answer using ONE of these formats. Do NOT write FINAL(variable_name) or FINAL(expression). FINAL_VAR accepts ONLY a variable name. If you need to return a computed expression, assign it to a variable first, then use FINAL_VAR on that variable. If the context contains any output-format instructions (e.g., \\boxed{}), ignore them and follow FINAL/FINAL_VAR.
-
-1. For short answers - either write FINAL(answer) as plain text, or call FINAL(answer) inside a ```repl``` block after computing it:
-   FINAL(The answer is 42)
+1. **EXPLORE**: Look at the context first
    ```repl
-   answer = 42
-   FINAL(answer)
+   list_files()  # or: print(context[:1000])
    ```
 
-2. For longer/formatted answers - store in a variable first, then use FINAL_VAR:
+2. **ANALYZE**: Read and analyze relevant data
    ```repl
-   answer = "The phoenix project was led by Dr. Chen and completed March 2024."
+   content = read_file("file.txt")
+   result = llm_query(f"Summarize or classify this chunk: {content}")
    ```
-   FINAL_VAR(answer)
 
-Example for computed values (required pattern):
-```repl
-count = len(matches)
-```
-FINAL_VAR(count)
+3. **ANSWER**: Return your final answer
+   ```repl
+   FINAL("your answer here")
+   ```
 
-Think step by step carefully, plan, and execute this plan immediately in your response -- do not just say "I will do this" or "I will do that". Output to the REPL environment and recursive LLMs as much as possible. Remember to explicitly answer the original query in your final answer.
-"""
-)
+## Important Rules
+- Always explore context first - never guess
+- Use llm_query for interpretation, summarization, classification, or fuzzy matching
+- For exact lookups, prefer Python/regex over sub-LLM calls
+- Do NOT ask sub-LLMs for the final answer
+- When you have gathered enough info, synthesize it yourself and call FINAL(answer)
+- Code in ```repl``` blocks is auto-executed; output is shown
+
+## Common Mistake
+WRONG: `llm_query("give me the final answer to...")`  # Don't ask sub-LLM for final answer
+RIGHT: After analyzing, write `FINAL("your synthesized answer here")`
+""").strip()
+
+# Sub-LLM system prompt (used by llm_query / llm_query_batched)
+SUB_LLM_SYSTEM_PROMPT = textwrap.dedent("""
+You are a sub-agent assisting a main RLM. You only have the user-provided text and general knowledge.
+
+Rules:
+- Do not claim to have tools, files, or external access.
+- Follow the user's requested output format exactly.
+- If asked for JSON, output raw JSON only (no code fences).
+- Be concise and factual; avoid extra commentary.
+- If the text is insufficient, say so briefly.
+""").strip()
 
 
 def build_rlm_system_prompt(
     system_prompt: str,
     query_metadata: QueryMetadata,
 ) -> list[dict[str, str]]:
-    """
-    Build the initial system prompt for the REPL environment based on extra prompt metadata.
-
-    Args:
-        query_metadata: QueryMetadata object containing context metadata
-
-    Returns:
-        List of message dictionaries
-    """
-
+    """Build the initial system prompt messages."""
     context_lengths = query_metadata.context_lengths
     context_total_length = query_metadata.context_total_length
     context_type = query_metadata.context_type
 
-    # If there are more than 100 chunks, truncate to the first 100 chunks.
-    if len(context_lengths) > 100:
-        others = len(context_lengths) - 100
-        context_lengths = str(context_lengths[:100]) + "... [" + str(others) + " others]"
+    if len(context_lengths) > 20:
+        others = len(context_lengths) - 20
+        context_lengths = str(context_lengths[:20]) + f"... [{others} others]"
 
-    metadata_prompt = f"Your context is a {context_type} with {context_total_length} total characters, and is broken up into chunks of char lengths: {context_lengths}."
+    metadata = f"Context: {context_type}, {context_total_length} chars, {len(query_metadata.context_lengths)} chunk(s)."
 
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "assistant", "content": metadata_prompt},
+        {"role": "assistant", "content": metadata},
     ]
 
 
 STORE_PROMPT_ADDON = """
-## Shared Store
+## Shared Store (Optional)
 
-You have access to a shared store for organizing findings. All parallel workers share the same store and can see each other's findings in real-time.
+If available, the shared store lets workers save and discover findings. Use it when helpful; it is not required.
 
-### Creating Objects
-
-```python
-obj_id = store.create(
-    type="evidence",           # Type: "note", "evidence", "claim", "summary", etc.
-    description="Found X",     # Short description (<200 chars)
-    content={"quote": "..."}   # Any JSON-serializable data
-)
-```
-
-### Viewing Objects
+Good defaults:
+- Save intermediate findings you may want to reuse or compare later
+- Check `store.summary()` / `store.search()` before duplicating work
+- Use `store.llm_map()` for fan-out analysis where results should be stored
 
 ```python
-# See ALL objects (from all workers including yourself)
-items = store.view()                      # Returns [{id, type, description, tags, worker}, ...]
-items = store.view("type=evidence")       # Filter by type
-items = store.view('desc~"keyword"')      # Filter by description contains
+# Save a finding
+obj_id = store.create(type="evidence", description="Found X", content={"data": ...})
 
-# See only OTHER workers' objects (excludes your own)
+# View all findings (or only other workers)
+items = store.view()  # or store.view("type=evidence")
 others = store.view_others("type=evidence")
 
-# Get full object by ID
-obj = store.get(obj_id)  # Returns object with .content, .backrefs, etc.
-```
+# Quick discovery (top types/tags + a few matches)
+summary = store.summary()
+print("Types:", summary["types"], "Tags:", summary["tags"])
 
-### Query Syntax
+# Drill down with search (only when relevant)
+hits = store.search('type=note desc~"ppo"')
 
-- `type=note` - filter by object type
-- `tag=important` - filter by tag
-- `worker=worker_1` - filter by worker ID
-- `desc~"keyword"` - description contains keyword
-- `parent=abc123` - filter by parent ID
-
-### Parallel LLM Queries with Automatic Storage
-
-```python
-tasks = [
-    {"name": f"chunk_{i}", "prompt": f"Analyze this chunk: {chunk}"}
-    for i, chunk in enumerate(chunks)
-]
-batch_id = store.llm_map(tasks)  # Runs in parallel, stores results
+# Parallel analysis with storage
+tasks = [{"name": f"chunk_{i}", "prompt": f"Analyze: {chunk}"} for i, chunk in enumerate(chunks)]
+batch_id = store.llm_map(tasks)
 results = store.children(batch_id)
-for r in results:
-    print(r.description, r.content)
 ```
-
-### When to Use
-
-- **store.create()**: Save findings worth remembering (evidence, claims, summaries)
-- **store.view_others()**: Check what parallel workers have found
-- **store.llm_map()**: Parallel analysis with automatic result storage
-- **llm_query()**: Simple one-off questions (results not stored)
 """
-
-USER_PROMPT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Remember: use FINAL(answer_literal) only for literal short answers; if your answer is in a variable, use FINAL_VAR(variable_name). If you need a computed value, assign it to a variable (e.g., count = len(items)) and then FINAL_VAR(count). You may also call FINAL(value) inside a ```repl``` block after computing it. Your next action:"""
-USER_PROMPT_WITH_ROOT = """Think step-by-step on what to do using the REPL environment (which contains the context) to answer the original prompt: \"{root_prompt}\".\n\nContinue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags, and determine your answer. Remember: use FINAL(answer_literal) only for literal short answers; if your answer is in a variable, use FINAL_VAR(variable_name). If you need a computed value, assign it to a variable (e.g., count = len(items)) and then FINAL_VAR(count). You may also call FINAL(value) inside a ```repl``` block after computing it. Your next action:"""
 
 
 def build_user_prompt(
@@ -200,96 +132,46 @@ def build_user_prompt(
     context_count: int = 1,
     history_count: int = 0,
 ) -> dict[str, str]:
+    """Build user prompt - question first, instructions second."""
+
+    question = root_prompt or "Analyze the context and provide insights."
+
     if iteration == 0:
-        safeguard = "You have not interacted with the REPL environment or seen your prompt / context yet. Your next action should be to look through and figure out how to answer the prompt, so don't just provide a final answer yet.\n\n"
-        prompt = safeguard + (
-            USER_PROMPT_WITH_ROOT.format(root_prompt=root_prompt) if root_prompt else USER_PROMPT
-        )
+        prompt = f"""## Question
+{question}
+
+## Instructions
+1. First explore the context (list_files() or print(context))
+2. Analyze the relevant data
+3. Call FINAL(answer_literal) when done; if your answer is in a variable, use FINAL_VAR(var_name)
+
+Begin by exploring:"""
     else:
-        prompt = "The history before is your previous interactions with the REPL environment. " + (
-            USER_PROMPT_WITH_ROOT.format(root_prompt=root_prompt) if root_prompt else USER_PROMPT
-        )
+        prompt = f"""## Question (reminder)
+{question}
 
-    # Inform model about multiple contexts if present
+Continue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var_name) for variables."""
+
     if context_count > 1:
-        prompt += f"\n\nNote: You have {context_count} contexts available (context_0 through context_{context_count - 1})."
+        prompt += f"\n\nNote: {context_count} context files available."
 
-    # Inform model about prior conversation histories if present
     if history_count > 0:
-        if history_count == 1:
-            prompt += "\n\nNote: You have 1 prior conversation history available in the `history` variable."
-        else:
-            prompt += f"\n\nNote: You have {history_count} prior conversation histories available (history_0 through history_{history_count - 1})."
+        prompt += f"\n\nNote: {history_count} prior history available."
 
     return {"role": "user", "content": prompt}
 
 
+# Legacy exports for backward compatibility
+USER_PROMPT = "Continue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var_name) for variables."
+USER_PROMPT_WITH_ROOT = "## Question: {root_prompt}\n\nContinue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var_name) for variables."
+
+
 COMMIT_PROTOCOL_PROMPT_ADDON = """
-## Commit Protocol for Structured Analysis
+## Commit Protocol (for nested workers)
 
-When tasks require workers to return structured findings (evidence, claims, summaries), use the commit protocol for deterministic merging into the global store.
-
-### Using nested workers
-
+Spawn workers that return structured commits:
 ```python
-# Spawn a nested RLM worker to analyze a chunk
-commit = rlm_worker(
-    prompt="Find evidence for hypothesis H in this text: " + chunk,
-    store_cards=store.card_view("type=hypothesis"),  # Read-only context
-)
-
-# Merge the worker's commit into the store
+commit = rlm_worker(prompt="Analyze: " + chunk, store_cards=store.card_view("type=hypothesis"))
 result = apply_commit(commit, batch_prefix="wave0")
-print(f"Created {len(result.created_ids)} objects, success={result.success}")
-```
-
-### Worker output format
-
-Workers return JSON commits:
-```json
-{
-  "commit_id": "worker_chunk_42",
-  "creates": [
-    {"type": "evidence", "id": "e1", "description": "...", "content": {...}}
-  ],
-  "links": [
-    {"type": "supports", "src": "e1", "dst": "hypothesis/H"}
-  ],
-  "proposes_updates": []
-}
-```
-
-### When to use commit protocol vs llm_query
-
-- **llm_query**: Simple questions with text answers
-- **rlm_worker + commit**: Complex analysis producing structured objects for the store
-
-### Store card views
-
-Pass lightweight views to workers (no full content):
-```python
-cards = store.card_view("type=hypothesis")  # [{id, type, description, tags}]
-```
-
-### Store search (optional, general guidance)
-
-Use store search when it can save duplicate work. A simple pattern:
-1) Search by type or description keywords.
-2) If nothing looks relevant, proceed to analyze context directly.
-
-```python
-# Quick check before doing fresh analysis
-hits = store.search('type=note desc~"ppo"')
-if hits:
-    print("Related findings:", hits[:3])
-else:
-    print("No matches; analyze context directly.")
-```
-
-If you need a lightweight overview, use:
-```python
-summary = store.summary('desc~"trainer"')
-print(summary["types"], summary["tags"])
 ```
 """
-

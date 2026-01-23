@@ -425,7 +425,46 @@ class SharedStore:
         tag_counts: dict[str, int] = {}
 
         with self._lock:
-            for obj in self._objects.values():
+            results = list(self._objects.values())
+            if not results:
+                return {"matches": matches, "types": [], "tags": []}
+
+            if query_str:
+                import shlex
+
+                parts = shlex.split(query_str)
+                for part in parts:
+                    if "=" in part and "~" not in part:
+                        key, value = part.split("=", 1)
+                        if key == "type":
+                            results = [obj for obj in results if obj.type == value]
+                        elif key == "tag":
+                            results = [obj for obj in results if value in obj.tags]
+                        elif key == "parent":
+                            results = [obj for obj in results if value in obj.parents]
+                        elif key == "worker":
+                            results = [obj for obj in results if obj.created_by == value]
+                        else:
+                            raise ValueError(f"Unknown query key: {key}")
+                    elif "~" in part:
+                        key, value = part.split("~", 1)
+                        if key == "desc":
+                            value = value.strip('"\'')
+                            if value:
+                                results = [
+                                    obj
+                                    for obj in results
+                                    if value.lower() in obj.description.lower()
+                                ]
+                        else:
+                            raise ValueError(f"Unknown query key: {key}")
+                    else:
+                        raise ValueError(f"Invalid query syntax: {part}")
+
+            # Exclude invalidated objects by default
+            results = [obj for obj in results if not obj.invalidated]
+
+            for obj in results:
                 type_counts[obj.type] = type_counts.get(obj.type, 0) + 1
                 for tag in obj.tags:
                     tag_counts[tag] = tag_counts.get(tag, 0) + 1
@@ -503,13 +542,20 @@ class SharedStore:
         Returns:
             The ID of the batch_node containing the results
         """
+        if not tasks:
+            raise ValueError("tasks must be non-empty")
         if self._llm_batch_fn is None:
             raise RuntimeError("llm_batch_fn not set. Call set_llm_batch_fn() first.")
 
+        for idx, task in enumerate(tasks):
+            if "prompt" not in task or "name" not in task:
+                raise ValueError(f"Task at index {idx} must include 'name' and 'prompt'")
         prompts = [t["prompt"] for t in tasks]
 
         start = time.time()
         responses = self._llm_batch_fn(prompts, model)
+        if len(responses) != len(prompts):
+            raise ValueError("llm_batch_fn returned a response count that does not match prompts")
         elapsed = time.time() - start
 
         # Log batch call to thread-local sink

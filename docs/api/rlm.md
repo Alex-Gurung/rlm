@@ -198,6 +198,8 @@ Override the default RLM system prompt. The default prompt instructs the LM on:
 - How to call `llm_query()` and `llm_query_batched()`
 - How to signal completion with `FINAL()`
 
+Legacy prompts (for baseline comparisons) are available in `rlm.utils.prompts_legacy`.
+
 ```python
 custom_prompt = """You are a data analysis expert.
 Use the REPL to analyze the context variable.
@@ -206,6 +208,76 @@ When done, output FINAL(your answer)."""
 rlm = RLM(
     ...,
     custom_system_prompt=custom_prompt,
+)
+```
+
+---
+
+#### `prompt_preset`
+{: .no_toc }
+
+**Type:** `str`  
+**Default:** `"default"`
+
+Selects the built-in prompt preset. Supported values:
+- `default` — current prompt set
+- `legacy` — baseline prompts preserved in `rlm.utils.prompts_legacy`
+
+```python
+rlm = RLM(
+    ...,
+    prompt_preset="legacy",
+)
+```
+
+Example using legacy prompt:
+```python
+from rlm.utils.prompts_legacy import RLM_SYSTEM_PROMPT_LEGACY
+
+rlm = RLM(
+    ...,
+    custom_system_prompt=RLM_SYSTEM_PROMPT_LEGACY,
+)
+```
+
+---
+
+#### `store_mode`
+{: .no_toc }
+
+**Type:** `str`  
+**Default:** `"shared"`
+
+Controls whether the shared store is available inside the REPL:
+- `shared` — Enable the shared store and include the store prompt add-on (default).
+- `none` — Disable the store (no `store`, `rlm_worker`, or commit helpers). Useful for baseline benchmarks.
+
+The shared store is scoped per completion. Even with `persistent=True`, the store resets on each new completion.
+
+```python
+rlm = RLM(
+    ...,
+    store_mode="none",  # disable store for baseline runs
+)
+```
+
+---
+
+#### `persistent`
+{: .no_toc }
+
+**Type:** `bool`  
+**Default:** `False`
+
+Reuse the same REPL environment across multiple `completion()` calls (multi-turn).
+Contexts and histories accumulate as `context_0`, `context_1`, ... and `history_0`, `history_1`, ...
+
+Note: the shared store still resets each completion to keep evaluations reproducible. Persistent mode is intended for interactive multi-turn sessions, not benchmarking.
+
+```python
+rlm = RLM(
+    ...,
+    persistent=True,
 )
 ```
 
@@ -234,7 +306,13 @@ rlm = RLM(
 # llm_query(prompt)  # Uses default (gpt-4o)
 # llm_query(prompt, model="claude-sonnet-4-20250514")  # Uses Claude
 # llm_query(prompt, model="gpt-4o-mini")  # Uses GPT-4o-mini
+# llm_query(prompt, output_format="json")  # Request output format
 ```
+
+Sub-LM calls are automatically seeded with a default system prompt that
+explains expected behavior (formatting, no tools, concise answers). You can
+optionally add `output_format="..."` or `system_prompt="..."` in `llm_query`
+and `llm_query_batched` to shape responses.
 
 ---
 
@@ -458,4 +536,3 @@ result = rlm.completion(
     root_prompt="Summarize the key findings"
 )
 ```
-

@@ -265,7 +265,7 @@ def run_filemap(
         max_depth=3,  # Allow root -> worker -> sub-worker
         max_iterations=max_iterations,
         verbose=verbose,
-        store_prompt=True,
+        store_mode="shared",
         logger=logger,
     )
 
@@ -286,7 +286,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hierarchical file mapping with RLM")
     parser.add_argument("--path", default="/mnt/disk/OpenRLHF/openrlhf", help="Directory to analyze")
     parser.add_argument("--backend", default="vllm")
-    parser.add_argument("--model", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8")
+    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--max-files", type=int, default=50)  # OpenRLHF has ~68 Python files
     parser.add_argument("--max-iterations", type=int, default=8)  # More iterations for hierarchical exploration

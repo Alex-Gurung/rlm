@@ -550,6 +550,32 @@ class TestSharedStoreLlmMap:
                 tasks=[{"name": "t1", "prompt": "p1"}],
             )
 
+    def test_llm_map_empty_tasks_raises(self):
+        shared = SharedStore()
+        shared.set_llm_batch_fn(lambda prompts, model: [])
+        with pytest.raises(ValueError, match="non-empty"):
+            shared.llm_map(worker_id="worker_A", tasks=[])
+
+    def test_llm_map_missing_name_or_prompt_raises(self):
+        shared = SharedStore()
+        shared.set_llm_batch_fn(lambda prompts, model: ["ok"])
+        with pytest.raises(ValueError, match="name"):
+            shared.llm_map(worker_id="worker_A", tasks=[{"prompt": "p1"}])
+        with pytest.raises(ValueError, match="name"):
+            shared.llm_map(worker_id="worker_A", tasks=[{"name": "t1"}])
+
+    def test_llm_map_response_count_mismatch_raises(self):
+        shared = SharedStore()
+        shared.set_llm_batch_fn(lambda prompts, model: ["only_one"])
+        with pytest.raises(ValueError, match="response count"):
+            shared.llm_map(
+                worker_id="worker_A",
+                tasks=[
+                    {"name": "t1", "prompt": "p1"},
+                    {"name": "t2", "prompt": "p2"},
+                ],
+            )
+
 
 class TestSharedStoreSearchSummary:
     """Tests for search() and summary()."""
@@ -573,3 +599,16 @@ class TestSharedStoreSearchSummary:
         assert "types" in summary
         assert "tags" in summary
         assert len(summary["matches"]) == 2
+
+    def test_summary_excludes_invalidated(self):
+        shared = SharedStore()
+        keep_id = shared.create(worker_id="w1", type="note", description="Keep", content="c1", tags=["t1"])
+        drop_id = shared.create(worker_id="w1", type="note", description="Drop", content="c2", tags=["t2"])
+
+        shared.invalidate(worker_id="w1", target_id=drop_id, reason="stale")
+
+        summary = shared.summary()
+        ids = {item["id"] for item in summary["matches"]}
+        assert keep_id in ids
+        assert drop_id not in ids
+        assert "t2" not in summary["tags"]

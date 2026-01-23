@@ -1,90 +1,67 @@
-# RLM Store & Batching Extensions
+# Shared Store & Batching
 
-Hierarchical store with provenance tracking and hyper-parallel batching for RLM.
+Shared, append-only store for coordinating parallel RLM workers and batching sub-LLM calls.
 
-## What Was Built
+## What It Is
 
-A `store` object is now available in the REPL environment that provides:
-- **Hierarchical storage**: Create structured notes, claims, summaries with parent/child relationships
-- **Provenance tracking**: Link stored objects back to source spans in context
-- **Parallel batching**: `store.llm_map()` runs multiple LLM queries concurrently and stores results
+The REPL environment can expose a `store` object (a `WorkerStoreProxy`) that writes to a
+shared `SharedStore`. This lets parallel workers see each other's findings in real time,
+while keeping writes append-only and attributable by worker ID.
 
-## Files Changed
+Key capabilities:
+- **Hierarchical storage**: notes, claims, summaries with parent/child relationships
+- **Provenance tracking**: attach `SpanRef` backrefs to source spans
+- **Discovery**: `store.search()` and `store.summary()` for lightweight lookup
+- **Batching**: `store.llm_map()` runs parallel sub-LLM calls and stores results
+
+## Files (Core)
 
 | File | Description |
 |------|-------------|
-| `rlm/core/types.py` | Added `store_events`, `batch_calls` fields to `REPLResult` |
-| `rlm/core/store.py` | NEW - `SpanRef`, `StoreObject`, `Store` class with `llm_map()` |
-| `rlm/environments/local_repl.py` | Injects `store` and `SpanRef` as REPL globals |
-| `rlm/utils/prompts.py` | Added `SMALL_MODEL_PROMPT_ADDON` constant |
-| `rlm/core/rlm.py` | Added `store_prompt: bool = False` parameter |
+| `rlm/core/shared_store.py` | `SharedStore`, `WorkerStoreProxy`, append-only event log |
+| `rlm/core/store.py` | `Store`, `SpanRef`, `StoreObject` utilities |
+| `rlm/environments/local_repl.py` | Injects `store` + commit helpers into REPL |
+| `rlm/core/rlm.py` | `store_mode` wiring and prompt add-ons |
+| `rlm/utils/prompts.py` | `STORE_PROMPT_ADDON`, `COMMIT_PROTOCOL_PROMPT_ADDON` |
 
 ## APIs Available in REPL
 
-### Hierarchical Storage
+### Create / Query
 
 ```python
-# Create an object
-id = store.create(
-    type="note",           # "note"|"claim"|"summary"|"batch_node"|"result"
-    description="Short description for navigation",
+obj_id = store.create(
+    type="note",
+    description="Short description",
     content={"any": "json-serializable data"},
     backrefs=[SpanRef("context_0", 100, 200)],  # optional provenance
     parents=["parent_id"],  # optional parent objects
-    tags=["important"],     # optional tags for filtering
+    tags=["important"],  # optional tags for filtering
 )
 
-# Retrieve objects
-obj = store.get(id)                    # Full object
-children = store.children(id)          # Child objects
-parents = store.parents(id)            # Parent objects
-
-# Query/navigate (returns metadata only: {id, type, description, tags})
-store.view()                           # All objects (newest first)
-store.view("type=note")                # Filter by type
-store.view("tag=important")            # Filter by tag
-store.view("parent=abc123")            # Filter by parent
-store.view('desc~"keyword"')           # Description contains
+items = store.view("type=note")          # metadata only
+others = store.view_others("type=note")  # exclude your worker's objects
+hits = store.search('desc~"ppo"')        # search by metadata
+summary = store.summary()                # top types/tags + sample matches
 ```
 
-### Parallel Batching
+### Batch Sub-LLM Calls
 
 ```python
-# Run multiple LLM queries in parallel, store results automatically
 batch_id = store.llm_map(
     tasks=[
-        {"name": "task1", "prompt": "Analyze chunk 1...", "description": "Chunk 1 analysis"},
-        {"name": "task2", "prompt": "Analyze chunk 2...", "description": "Chunk 2 analysis"},
-        # ... more tasks
+        {"name": "chunk_1", "prompt": "Analyze chunk 1"},
+        {"name": "chunk_2", "prompt": "Analyze chunk 2"},
     ],
-    parent="optional_parent_id",  # Link batch to a parent object
-    model="optional_model_name",  # Use specific model
 )
 
-# Results are stored as children of the batch node
 results = store.children(batch_id)
 for r in results:
     print(r.description, r.content)
 ```
 
-### Provenance with SpanRef
-
-```python
-# Reference a span in context
-ref = SpanRef(
-    source_id="context_0",  # or file path like "/path/to/file.txt"
-    start=100,
-    end=200,
-    unit="chars",  # or "lines"
-)
-
-# Attach to created objects
-store.create("claim", "Found answer", "42", backrefs=[ref])
-```
-
 ## Usage
 
-### Enable Store Instructions in Prompt
+### Shared Store (default)
 
 ```python
 from rlm import RLM
@@ -92,40 +69,47 @@ from rlm import RLM
 rlm = RLM(
     backend="vllm",
     backend_kwargs={"model_name": "..."},
-    store_prompt=True,  # Appends store/batching instructions to system prompt
+    store_mode="shared",  # default
 )
-
-result = rlm.completion("Analyze these 20 documents and find...")
 ```
 
-When `store_prompt=True`, the model receives **directive** instructions requiring it to:
-- Use `store.llm_map()` for 3+ similar queries - **NEVER** use loops with `llm_query()`
-- Includes a concrete example matching common fan-out patterns
-- Results are auto-stored and accessible via `store.children(batch_id)`
-
-### Logging
-
-Events are logged in JSONL via `REPLResult`:
+### Disable Store (baseline)
 
 ```python
-# store_events: operations on the store
-{"op": "create", "id": "abc123", "type": "note", "description": "...", "ts": 1234.5}
+rlm = RLM(
+    backend="vllm",
+    backend_kwargs={"model_name": "..."},
+    store_mode="none",  # no store, no rlm_worker helpers
+)
+```
 
-# batch_calls: llm_map executions
+**Prompting note:** The shared-store prompt is *suggestive*, not directive. Models are encouraged
+to use the store when helpful, but nothing forces it.
+
+## Logging
+
+Store events are captured in `REPLResult.store_events`:
+
+```json
+{"op": "create", "id": "worker_A_000001", "type": "note", "description": "...", "ts": 1234.5}
+```
+
+Batch calls are captured in `REPLResult.batch_calls`:
+
+```json
 {"prompts_count": 8, "model": "qwen", "execution_time": 2.3, "ts": 1234.5}
 ```
 
-## Design Decisions
+## Design Notes
 
-- **Environments**: LocalREPL only (remote envs deferred - need script serialization)
-- **Persistence**: In-memory per `completion()` call (when `persistent=False`). If `persistent=True`, the store persists across completion calls for that REPL instance.
-- **Prompts**: `store_prompt=True` is opt-in; default behavior unchanged
+- **Per-completion store**: every root completion gets a fresh store, even in `persistent=True` mode.
+- **Shared across workers**: nested workers see the same store via `WorkerStoreProxy`.
+- **Store optional**: `store_mode="none"` disables store and commit helpers.
 
 ## TODO / Future Plans
 
-- [ ] Benchmark: Compare `store_prompt=True` vs `False` on OOLONG / fan-out tasks
-- [ ] Visualizer: Add a hierarchy/tree view (store/batch event lists are already visible)
-- [ ] Remote environment support
-- [ ] `store.llm_reduce()` - aggregate child results with LLM
-- [ ] Persistence across `completion()` calls
-- [ ] Store export/import for debugging
+- Benchmark shared-store vs baseline on OOLONG / fan-out tasks
+- Interactive store/tree visualization in the visualizer
+- Remote environment support
+- `store.llm_reduce()` for aggregation
+- Store export/import for debugging

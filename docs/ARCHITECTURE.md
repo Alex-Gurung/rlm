@@ -4,18 +4,20 @@
 
 RLM supports two store modes for worker coordination:
 
-1. **Isolated Stores (default)**: Each worker has its own store. Workers communicate via commit protocol (serialize findings, merge after completion).
-2. **Shared Store (explicit opt-in)**: Parallel workers share a single append-only store. Workers can see each other's findings in real-time.
+1. **Shared Store (default)**: Parallel workers share a single append-only store. Workers can see each other's findings in real-time.
+2. **Store Disabled (`store_mode="none"`)**: No store is exposed (useful for benchmarking original RLM behavior without shared state).
+
+Store scope: each root completion gets a fresh store, even if `persistent=True`.
 
 ---
 
-## Shared Store Architecture (explicit opt-in)
+## Shared Store Architecture (default)
 
-When `environment_kwargs={"shared_store": True}` is set for local environments, all workers share a single `SharedStore`:
+When `store_mode="shared"` (default) is used for local environments, all workers share a single `SharedStore`:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│ Root RLM (depth=0, max_depth=3, store_prompt=True)                               │
+│ Root RLM (depth=0, max_depth=3, store_mode="shared")                             │
 │                                                                                  │
 │ REPL globals:                                                                    │
 │   context, store (WorkerStoreProxy), rlm_worker, rlm_worker_batched              │
@@ -112,7 +114,9 @@ shared.events_since(seq)                        # For future remote sync
 
 ---
 
-## Isolated Store Architecture (default)
+## Commit Protocol Architecture (legacy baseline)
+
+This section documents the pre-shared-store workflow used for baseline comparisons. In `store_mode="none"`, the store and commit helpers are not exposed unless you provide your own store in the environment.
 
 ## Overview Diagram
 
@@ -132,7 +136,7 @@ shared.events_since(seq)                        # For future remote sync
 │ │       commit = rlm_worker(f"Analyze {doc}", store_cards=cards)               │ │
 │ │       apply_commit(commit, batch_prefix=doc.id)                              │ │
 │ │                                                                              │ │
-│ │   # Or use rlm_worker_batched for parallel (requires store_prompt=True):     │ │
+│ │   # Or use rlm_worker_batched for parallel (requires store_mode="shared"):   │ │
 │ │   # tasks = [{"prompt": f"Analyze {doc}"} for doc in docs]                   │ │
 │ │   # commits = rlm_worker_batched(tasks, max_parallel=8)                      │ │
 │ └──────────────────────────────────────────────────────────────────────────────┘ │
@@ -255,4 +259,4 @@ shared.events_since(seq)                        # For future remote sync
 | `rlm/core/commit.py` | `Commit`, `parse_commit()`, `apply_commit()` |
 | `rlm/environments/local_repl.py` | `LocalREPL` with `rlm_worker()`, `rlm_worker_batched()` |
 | `rlm/core/types.py` | `REPLResult`, `CommitEvent`, `RLMChatCompletion` |
-| `rlm/utils/prompts.py` | `COMMIT_PROTOCOL_PROMPT_ADDON`, `SHARED_STORE_PROMPT_ADDON` |
+| `rlm/utils/prompts.py` | `COMMIT_PROTOCOL_PROMPT_ADDON`, `STORE_PROMPT_ADDON` |

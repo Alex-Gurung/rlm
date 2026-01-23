@@ -167,20 +167,28 @@ multiline answer)"""
                 or f'"{var_name}"' in call_args
             )
 
-    def test_final_var_takes_precedence_over_final(self):
-        """Test that FINAL_VAR is checked first and takes precedence over FINAL."""
+    def test_last_final_takes_precedence_over_final_var(self):
+        """Test that the last FINAL/FINAL_VAR by position wins."""
         mock_env = Mock()
         mock_env.execute_code.return_value = REPLResult(stdout="var_value", stderr="", locals={})
 
-        # If both appear, FINAL_VAR should be found first (checked first in the function)
+        # If FINAL is last, it should be returned even if FINAL_VAR appeared earlier
         text = "FINAL_VAR(result)\nFINAL(direct_answer)"
         result = find_final_answer(text, environment=mock_env)
-        assert result == "var_value"  # FINAL_VAR should be returned
+        assert result == "direct_answer"
 
-        # Without environment, FINAL_VAR pattern is found but returns None (no fallback to FINAL)
-        # This is expected behavior - FINAL_VAR takes precedence when found
+        # Without environment, FINAL is still returned since it's last
         result = find_final_answer(text)
-        assert result is None  # FINAL_VAR found but no environment, so returns None
+        assert result == "direct_answer"
+
+        # If FINAL_VAR is last, it should be returned (with environment)
+        text = "FINAL(direct_answer)\nFINAL_VAR(result)"
+        result = find_final_answer(text, environment=mock_env)
+        assert result == "var_value"
+
+        # Without environment, FINAL_VAR is last so we return None (no fallback)
+        result = find_final_answer(text)
+        assert result is None
 
         # Test that FINAL alone works when FINAL_VAR is not present
         text_final_only = "FINAL(direct_answer)"

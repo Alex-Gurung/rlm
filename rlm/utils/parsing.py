@@ -46,34 +46,42 @@ def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | 
     # This prevents capturing variable names like FINAL(result) in code blocks
     text_without_code = re.sub(r"```(?:repl|python)?\s*\n.*?\n```", "", text, flags=re.DOTALL)
 
-    # Check for FINAL_VAR pattern first - must be at start of line
+    # Find FINAL_VAR and FINAL occurrences, then select the last by position.
     final_var_pattern = r"^\s*FINAL_VAR\(([^)]+)\)"
-    match = re.search(final_var_pattern, text_without_code, re.MULTILINE)
-    if match:
+    final_pattern = r"^\s*FINAL\(([\s\S]*?)\)\s*$"
+
+    final_var_matches = [
+        ("final_var", match)
+        for match in re.finditer(final_var_pattern, text_without_code, re.MULTILINE)
+    ]
+    final_matches = [
+        ("final", match)
+        for match in re.finditer(final_pattern, text_without_code, re.MULTILINE)
+    ]
+
+    if not final_var_matches and not final_matches:
+        return None
+
+    kind, match = max(final_var_matches + final_matches, key=lambda item: item[1].start())
+
+    if kind == "final_var":
         variable_name = match.group(1).strip().strip('"').strip("'")
         if environment is not None:
             # FINAL_VAR prints FINAL(value) to stdout - we just need to call it
             result = environment.execute_code(f"FINAL_VAR({variable_name!r})")
-            # Parse the FINAL(...) pattern from stdout
+            # Parse the last FINAL(...) pattern from stdout
             stdout = result.stdout.strip()
-            final_match = re.search(r"FINAL\((.+)\)", stdout, re.DOTALL)
-            if final_match:
-                return final_match.group(1).strip()
-            # Fallback to raw stdout if FINAL pattern not found
+            finals = re.findall(r"FINAL\((.*?)\)", stdout, re.DOTALL)
+            if finals:
+                return finals[-1].strip()
             if stdout:
                 return stdout
             if result.stderr.strip():
                 return result.stderr.strip()
-            return ""
+            return None
         return None
 
-    # Check for FINAL pattern - greedy match to handle nested parens
-    # Match FINAL( then capture everything until the last ) on the same logical block
-    # DOTALL makes . match newlines, MULTILINE makes ^ match line starts
-    final_pattern = r"^\s*FINAL\((.+)\)\s*$"
-    match = re.search(final_pattern, text_without_code, re.MULTILINE | re.DOTALL)
-    if match:
-        return match.group(1).strip()
+    return match.group(1).strip()
 
     return None
 

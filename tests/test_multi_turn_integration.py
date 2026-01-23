@@ -165,7 +165,7 @@ class TestMultiTurnPromptAwareness:
                 user_messages = [m for m in last_prompt if m.get("role") == "user"]
                 user_content = " ".join(m.get("content", "") for m in user_messages)
 
-                assert "2 contexts" in user_content or "context_0" in user_content
+                assert "2 context" in user_content or "context_0" in user_content
 
     def test_prompt_includes_history_count(self):
         """Model should be informed about available histories."""
@@ -189,6 +189,35 @@ class TestMultiTurnPromptAwareness:
                 user_content = " ".join(m.get("content", "") for m in user_messages)
 
                 assert "history" in user_content.lower()
+
+
+class TestPersistentSharedStoreReset:
+    """Tests that shared store resets between completions in persistent mode."""
+
+    def test_shared_store_resets_each_completion(self):
+        responses = [
+            "```repl\nstore.create(type='note', description='first', content='a')\n```\nFINAL(done1)",
+            "FINAL(done2)",
+        ]
+
+        with patch.object(rlm_module, "get_client") as mock_get_client:
+            mock_lm = create_mock_lm(responses)
+            mock_get_client.return_value = mock_lm
+
+            with RLM(
+                backend="openai",
+                backend_kwargs={"model_name": "test"},
+                persistent=True,
+                store_mode="shared",
+            ) as rlm:
+                rlm.completion("First context")
+                env = rlm._persistent_env
+                assert env is not None
+                assert len(env.store.view()) == 1
+
+                mock_lm.completion.side_effect = [responses[1]]
+                rlm.completion("Second context")
+                assert len(env.store.view()) == 0
 
 
 class TestMultiTurnCodeExecution:

@@ -117,8 +117,8 @@ python -m vllm.entrypoints.openai.api_server \\
       <p className="text-muted-foreground mt-4">Inside REPL (future releases):</p>
       <CodeBlock code={`llm_query("prompt")  # Uses default (gpt-5-mini)
 llm_query("prompt", model="claude-sonnet-4-20250514")  # Uses Claude 
-llm_query("prompt", model="gpt-4o-mini")  # Uses GPT-4o-mini`} />
+llm_query("prompt", model="gpt-4o-mini")  # Uses GPT-4o-mini
+llm_query("prompt", output_format="json")  # Request output format`} />
     </div>
   );
 }
-

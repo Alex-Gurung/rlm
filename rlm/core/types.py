@@ -259,6 +259,7 @@ class RLMMetadata:
     environment_type: str
     environment_kwargs: dict[str, Any]
     other_backends: list[str] | None = None
+    prompt_preset: str | None = None
 
     def to_dict(self):
         return {
@@ -274,6 +275,7 @@ class RLMMetadata:
                 k: _serialize_value(v) for k, v in self.environment_kwargs.items()
             },
             "other_backends": self.other_backends,
+            "prompt_preset": self.prompt_preset,
         }
 
 

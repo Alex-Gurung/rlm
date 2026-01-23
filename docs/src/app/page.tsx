@@ -249,9 +249,10 @@ print(result.response)`} />
         <h2 className="text-3xl font-bold mb-6">Core Components</h2>
         
         <p className="text-muted-foreground mb-6 leading-relaxed text-lg max-w-4xl">
-          RLMs indirectly handle contexts by storing them in a persistent REPL environment, where an LM can view and 
-          run code inside of. It also has the ability to sub-query (R)LMs (i.e. with <code className="px-1.5 py-0.5 rounded bg-muted text-foreground text-sm font-semibold">llm_query</code> calls) 
-          and produce a final answer based on this). This design generally requires the following components:
+          RLMs handle contexts by storing them in a stateful REPL environment where an LM can view and run code. 
+          State persists across code execution turns within a completion. The model can also sub-query (R)LMs 
+          (e.g., via <code className="px-1.5 py-0.5 rounded bg-muted text-foreground text-sm font-semibold">llm_query</code>) 
+          and produce a final answer based on this. This design generally requires the following components:
         </p>
 
         <div className="bg-gradient-to-br from-purple-50 to-pink-50/30 rounded-xl p-8 border border-purple-200/50 shadow-sm mb-6">
@@ -287,4 +288,3 @@ print(result.response)`} />
     </div>
   );
 }
-

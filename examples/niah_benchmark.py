@@ -85,7 +85,8 @@ def parse_log_metrics(log_file: str) -> dict:
 def run_niah(
     backend: str,
     backend_kwargs: dict,
-    store_prompt: bool,
+    store_enabled: bool,
+    prompt_preset: str,
     samples: list,
     log_dir: str,
     max_iterations: int,
@@ -95,7 +96,7 @@ def run_niah(
     from rlm import RLM
     from rlm.logger import RLMLogger
 
-    name = "store" if store_prompt else "baseline"
+    name = "store" if store_enabled else "baseline"
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logger = RLMLogger(log_dir=log_dir, file_name=f"niah_{name}")
 
@@ -113,7 +114,8 @@ def run_niah(
         max_iterations=max_iterations,
         logger=logger,
         verbose=verbose,
-        store_prompt=store_prompt,
+        store_mode="shared" if store_enabled else "none",
+        prompt_preset=prompt_preset,
     )
 
     correct = 0
@@ -217,7 +219,7 @@ def print_results(results: list[NIAHResult]):
 def main():
     parser = argparse.ArgumentParser(description="NIAH Benchmark: Baseline vs Store")
     parser.add_argument("--backend", default="vllm")
-    parser.add_argument("--model", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8")
+    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--num-items", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -229,6 +231,7 @@ def main():
     parser.add_argument("--baseline-only", action="store_true")
     parser.add_argument("--store-only", action="store_true")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--prompt-preset", default="default", choices=["default", "legacy"])
     args = parser.parse_args()
 
     disable_progress_bar()
@@ -272,20 +275,20 @@ def main():
     # Run baseline
     if not args.store_only:
         print("\n" + "=" * 60)
-        print("Running BASELINE (store_prompt=False)")
+        print("Running BASELINE (store_mode='none')")
         print("=" * 60)
         results.append(run_niah(
-            args.backend, backend_kwargs, False,
+            args.backend, backend_kwargs, False, args.prompt_preset,
             samples, args.log_dir, args.max_iterations, args.verbose
         ))
 
     # Run store-enabled
     if not args.baseline_only:
         print("\n" + "=" * 60)
-        print("Running STORE-ENABLED (store_prompt=True)")
+        print("Running STORE-ENABLED (store_mode='shared')")
         print("=" * 60)
         results.append(run_niah(
-            args.backend, backend_kwargs, True,
+            args.backend, backend_kwargs, True, args.prompt_preset,
             samples, args.log_dir, args.max_iterations, args.verbose
         ))
 

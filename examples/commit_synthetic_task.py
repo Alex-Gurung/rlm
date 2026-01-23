@@ -9,7 +9,7 @@ Runs a tiny, deterministic analysis that should trigger:
 
 Usage:
   uv run python examples/commit_synthetic_task.py
-  uv run python examples/commit_synthetic_task.py --base-url http://localhost:8000/v1 --model-name Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8
+  uv run python examples/commit_synthetic_task.py --base-url http://localhost:8000/v1 --model-name Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
 """
 
 from __future__ import annotations
@@ -194,7 +194,7 @@ def count_commit_events(log_path: str) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Synthetic commit-protocol test")
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
-    parser.add_argument("--model-name", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8")
+    parser.add_argument("--model-name", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
     parser.add_argument("--max-tokens", type=int, default=4096)
     parser.add_argument("--max-iterations", type=int, default=6)
     parser.add_argument("--max-depth", type=int, default=3)
@@ -219,7 +219,7 @@ def main() -> None:
         max_iterations=args.max_iterations,
         custom_system_prompt=RLM_SYSTEM_PROMPT + COMMIT_PROTOCOL_PROMPT_ADDON,
         logger=logger,
-        store_prompt=False,
+        store_mode="shared",
     )
 
     print("=" * 72)

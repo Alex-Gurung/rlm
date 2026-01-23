@@ -168,6 +168,7 @@ def run_single(
     backend: str,
     backend_kwargs: dict,
     store_mode: str,
+    prompt_preset: str,
     context: str | dict,
     question: str,
     correct_facts: set[int],
@@ -196,6 +197,7 @@ def run_single(
         logger=logger,
         verbose=True,
         store_mode=store_mode,
+        prompt_preset=prompt_preset,
     )
 
     start = time.perf_counter()
@@ -324,7 +326,7 @@ Respond in JSON format:
 def main():
     parser = argparse.ArgumentParser(description="RLM Store Benchmark")
     parser.add_argument("--backend", default="vllm")
-    parser.add_argument("--model", default="Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8")
+    parser.add_argument("--model", default="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8")
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--num-facts", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
@@ -336,6 +338,7 @@ def main():
     parser.add_argument("--judge", action="store_true", help="Use LLM-as-a-judge for evaluation")
     parser.add_argument("--judge-model", default=None, help="Model for LLM judge (defaults to same as --model)")
     parser.add_argument("--judge-backend", default=None, help="Backend for LLM judge (defaults to same as --backend)")
+    parser.add_argument("--prompt-preset", default="default", choices=["default", "legacy"])
     args = parser.parse_args()
 
     # Generate task
@@ -393,7 +396,7 @@ def main():
         print("Running BASELINE (store_mode='none')")
         print("=" * 60)
         results.append(run_single(
-            args.backend, backend_kwargs, "none",
+            args.backend, backend_kwargs, "none", args.prompt_preset,
             context, question, correct_facts, args.log_dir
         ))
 
@@ -403,7 +406,7 @@ def main():
         print("Running SHARED STORE (store_mode='shared')")
         print("=" * 60)
         results.append(run_single(
-            args.backend, backend_kwargs, "shared",
+            args.backend, backend_kwargs, "shared", args.prompt_preset,
             context, question, correct_facts, args.log_dir
         ))
 

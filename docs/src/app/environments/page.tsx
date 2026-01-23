@@ -98,11 +98,15 @@ export default function EnvironmentsPage() {
                 "Your input prompt, available as a variable in the REPL"
               ],
               [
-                <code key="2" className="text-sm font-semibold">llm_query(prompt, model=None)</code>, 
+                <code key="1b" className="text-sm font-semibold">store</code>,
+                "Shared store proxy for saving/searching findings (only when store_mode=\"shared\")"
+              ],
+              [
+                <code key="2" className="text-sm font-semibold">llm_query(prompt, model=None, output_format=None, system_prompt=None)</code>, 
                 "Query a sub-LM from within the REPL. Returns the completion string."
               ],
               [
-                <code key="3" className="text-sm font-semibold">llm_query_batched(prompts, model=None)</code>, 
+                <code key="3" className="text-sm font-semibold">llm_query_batched(prompts, model=None, output_format=None, system_prompt=None)</code>, 
                 "Concurrent sub-LM queries. Returns a list of completion strings."
               ],
               [
@@ -117,7 +121,7 @@ export default function EnvironmentsPage() {
 context = "Your input here"
 
 # Query a sub-LM
-result = llm_query("Summarize the context", model="gpt-5-mini")
+result = llm_query("Summarize the context", model="gpt-5-mini", output_format="json")
 
 # Process the result
 summary = process(result)
@@ -163,4 +167,3 @@ FINAL_VAR(summary)`} />
     </div>
   );
 }
-
