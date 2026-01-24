@@ -24,7 +24,8 @@ from typing import Any
 
 from rlm.core.rlm import RLM
 from rlm.logger import RLMLogger
-from rlm.utils.prompts import COMMIT_PROTOCOL_PROMPT_ADDON, RLM_SYSTEM_PROMPT
+from rlm.utils.prompts import RLM_SYSTEM_PROMPT
+from rlm.utils.prompts_commit import COMMIT_PROTOCOL_PROMPT_ADDON
 
 
 def build_context() -> dict[str, Any]:

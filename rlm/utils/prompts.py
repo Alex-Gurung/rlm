@@ -94,34 +94,86 @@ def build_rlm_system_prompt(
 
 
 STORE_PROMPT_ADDON = """
-## Shared Store (Optional)
+## Shared Store
 
-If available, the shared store lets workers save and discover findings. Use it when helpful; it is not required.
+The store is a **shared workspace** visible to you and any workers you spawn. Use it to accumulate findings and coordinate work.
 
-Good defaults:
-- Save intermediate findings you may want to reuse or compare later
-- Check `store.summary()` / `store.search()` before duplicating work
-- Use `store.llm_map()` for fan-out analysis where results should be stored
+### Ways to Delegate Work
 
-```python
-# Save a finding
-obj_id = store.create(type="evidence", description="Found X", content={"data": ...})
+**1. `llm_query(prompt)` / `llm_query_batched(prompts)` - Quick text analysis**
+- Single or parallel LLM calls for interpretation, summarization, classification
+- No store access, no persistence - just returns text
+- Use for: Quick questions, classification, summarization
 
-# View all findings (or only other workers)
-items = store.view()  # or store.view("type=evidence")
-others = store.view_others("type=evidence")
+```repl
+# Single query
+result = llm_query(f"Classify this text: {chunk}")
+print(result)  # "Category: Technical documentation"
 
-# Quick discovery (top types/tags + a few matches)
-summary = store.summary()
-print("Types:", summary["types"], "Tags:", summary["tags"])
+# Parallel queries (faster than sequential llm_query calls)
+prompts = [f"Summarize: {c}" for c in chunks]
+results = llm_query_batched(prompts)  # Returns list of strings
+```
 
-# Drill down with search (only when relevant)
-hits = store.search('type=note desc~"ppo"')
+**2. `store.llm_map(tasks)` - Parallel analysis with auto-save**
+- Runs multiple LLM queries in parallel
+- Results are **automatically saved to the store** (unlike llm_query_batched)
+- Workers don't have full REPL, just answer the prompt
+- Use for: Processing many chunks when you need to persist and review results
 
-# Parallel analysis with storage
-tasks = [{"name": f"chunk_{i}", "prompt": f"Analyze: {chunk}"} for i, chunk in enumerate(chunks)]
+```repl
+tasks = [
+    {"name": "chunk_0", "prompt": f"Find key facts in: {chunks[0]}"},
+    {"name": "chunk_1", "prompt": f"Find key facts in: {chunks[1]}"},
+]
 batch_id = store.llm_map(tasks)
-results = store.children(batch_id)
+# Results auto-saved; view via store.view() or store.children(batch_id)
+```
+
+**3. `rlm_worker(prompt)` - Full nested worker (advanced)**
+- Spawns a complete nested RLM with REPL and store access
+- Worker can read files, run code, and save to the shared store
+- Use for: Complex sub-tasks requiring multiple steps
+
+```repl
+result = rlm_worker("Analyze config files and save findings to store")
+print(result["answer"])  # Worker's final answer
+# Worker's store.create() calls are visible via store.view_others()
+```
+
+### When to Use What
+
+| Tool | Returns | Persists | Best for |
+|------|---------|----------|----------|
+| `llm_query` | string | No | Single quick question |
+| `llm_query_batched` | list[str] | No | Multiple parallel questions |
+| `store.llm_map` | batch_id | Yes | Parallel analysis + store results |
+| `rlm_worker` | dict | Yes (via worker) | Complex multi-step subtask |
+
+### Store API
+
+```repl
+# Save a finding
+obj_id = store.create(
+    type="finding",              # category (e.g., "note", "evidence", "summary")
+    description="Found X in Y",  # short description
+    content={"data": ...}        # any JSON-serializable data
+)
+# Returns: "obj_abc123"
+
+# Review findings
+store.view()                     # list all objects (yours + workers')
+# Returns: [{"id": "obj_abc", "type": "finding", "description": "...", ...}, ...]
+
+store.view_others()              # only objects from workers
+store.summary()                  # overview: {"types": [...], "tags": [...], "count": N}
+
+# Search
+store.search('type=finding desc~"keyword"')
+# Returns: matching objects
+
+# Get children of a batch
+store.children(batch_id)         # results from store.llm_map
 ```
 """
 
@@ -164,14 +216,3 @@ Continue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var
 # Legacy exports for backward compatibility
 USER_PROMPT = "Continue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var_name) for variables."
 USER_PROMPT_WITH_ROOT = "## Question: {root_prompt}\n\nContinue. Call FINAL(answer_literal) when you have the answer; use FINAL_VAR(var_name) for variables."
-
-
-COMMIT_PROTOCOL_PROMPT_ADDON = """
-## Commit Protocol (for nested workers)
-
-Spawn workers that return structured commits:
-```python
-commit = rlm_worker(prompt="Analyze: " + chunk, store_cards=store.card_view("type=hypothesis"))
-result = apply_commit(commit, batch_prefix="wave0")
-```
-"""

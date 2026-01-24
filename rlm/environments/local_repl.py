@@ -23,7 +23,8 @@ from rlm.core.shared_store import SharedStore, WorkerStoreProxy
 from rlm.core.store import SpanRef, Store
 from rlm.core.types import CommitEvent, REPLResult, RLMChatCompletion
 from rlm.environments.base_env import NonIsolatedEnv
-from rlm.utils.prompts import COMMIT_PROTOCOL_PROMPT_ADDON, SUB_LLM_SYSTEM_PROMPT
+from rlm.utils.prompts import SUB_LLM_SYSTEM_PROMPT
+from rlm.utils.prompts_commit import COMMIT_PROTOCOL_PROMPT_ADDON
 
 if TYPE_CHECKING:
     from rlm.core.rlm import RLM
@@ -173,7 +174,7 @@ class LocalREPL(NonIsolatedEnv):
         worker_environment_kwargs: dict[str, Any] | None = None,
         worker_other_backends: list[str] | None = None,
         worker_other_backend_kwargs: list[dict[str, Any]] | None = None,
-        worker_commit_prompt: bool = True,
+        worker_commit_prompt: bool = False,
         worker_commit_prompt_addon: str | None = None,
         worker_prompt_preset: str | None = None,
         logger: "RLMLogger | None" = None,
@@ -502,10 +503,10 @@ class LocalREPL(NonIsolatedEnv):
 
             # Prepare environment kwargs, passing shared_store if available
             env_kwargs = self._worker_environment_kwargs.copy()
+            # Generate unique worker_id for the child
+            child_worker_id = f"worker_{self.depth + 1}_{uuid.uuid4().hex[:6]}"
             if self._shared_store is not None:
                 env_kwargs["shared_store"] = self._shared_store
-                # Generate unique worker_id for the child
-                child_worker_id = f"worker_{self.depth + 1}_{uuid.uuid4().hex[:6]}"
                 env_kwargs["worker_id"] = child_worker_id
 
             worker_rlm = RLM(
@@ -537,12 +538,18 @@ class LocalREPL(NonIsolatedEnv):
                     result_summary=result.response[:200] if result.response else None,
                 )
 
-            # Parse commit from response
-            commit = parse_commit(result.response, fallback_id=f"worker_{self.depth}")
-
             # Track the LLM call
             self._pending_llm_calls.append(result)
 
+            # If commit protocol disabled, return simple answer dict
+            if not self._worker_commit_prompt:
+                return {
+                    "answer": result.response,
+                    "worker_id": child_worker_id if self._shared_store else None,
+                }
+
+            # Parse commit from response (commit protocol enabled)
+            commit = parse_commit(result.response, fallback_id=f"worker_{self.depth}")
             return commit.to_dict()
 
         except Exception as e:

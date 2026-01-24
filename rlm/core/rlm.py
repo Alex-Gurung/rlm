@@ -21,7 +21,6 @@ from rlm.utils.parsing import (
     format_iteration,
 )
 from rlm.utils.prompts import (
-    COMMIT_PROTOCOL_PROMPT_ADDON,
     RLM_SYSTEM_PROMPT,
     STORE_PROMPT_ADDON,
     SUB_LLM_SYSTEM_PROMPT,
@@ -29,6 +28,7 @@ from rlm.utils.prompts import (
     build_rlm_system_prompt,
     build_user_prompt,
 )
+from rlm.utils.prompts_commit import COMMIT_PROTOCOL_PROMPT_ADDON
 from rlm.utils.rlm_utils import filter_sensitive_keys
 
 
