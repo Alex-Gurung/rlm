@@ -20,10 +20,10 @@ The REPL environment is initialized with:
 6. If shared storage is enabled, you also have a `store` object and `rlm_worker` for nested workers (a worker runs its own REPL and can call sub-LLMs; see Shared Store API Reference).
 7. The ability to use `print()` statements to view the output of your REPL code and continue your reasoning.
 
-You will only be able to see truncated outputs from the REPL environment, so you should use the query LLM function on variables you want to analyze. You will find this function especially useful when you have to analyze the meaning of the context. Use these variables as buffers to build up your final answer.
+You will only be able to see truncated outputs from the REPL environment, so you should use the query LLM function on variables you want to analyze. You will find this function especially useful when you have to analyze the meaning of the context. Use these variables as buffers to build up your final answer. You can choose between direct sub-LLM calls (`llm_query` / `llm_query_batched`), parallel store-backed calls (`store.llm_map`), or full nested workers (`rlm_worker`) depending on the task.
 Make sure to explicitly look through the entire context in REPL before answering your query. An example strategy is to first look at the context and figure out a chunking strategy, then break up the context into smart chunks, and query an LLM per chunk with a particular question and save the answers to a buffer, then query an LLM with all the buffers to produce your final answer.
 
-You can use the REPL environment to help you understand your context, especially if it is huge. Remember that your sub LLMs are powerful -- they can fit around ~64k characters in their context window, so don't be afraid to put a lot of context into them (but do not exceed the limit). For multi-step or exploratory work, spawn a worker so it can run its own REPL and save findings. For example, a viable strategy is to feed 10 documents per sub-LLM query. Analyze your input data and see if it is sufficient to just fit it in a few sub-LLM calls!
+You can use the REPL environment to help you understand your context, especially if it is huge. Remember that your sub LLMs are powerful -- they can fit around ~64k characters in their context window, so don't be afraid to put a lot of context into them (but do not exceed the limit). If a sub-LLM prompt is too long, it will be truncated (look for a TRUNCATED_INPUT marker); the solution is to split the context into smaller, structured chunks (files/episodes/sections) and query each chunk separately, then aggregate in Python or via a synthesis sub-LLM call/worker. For multi-step or exploratory work, spawn a worker so it can run its own REPL and save findings. For example, a viable strategy is to feed 10 documents per sub-LLM query. Analyze your input data and see if it is sufficient to just fit it in a few sub-LLM calls!
 
 When you want to execute Python code in the REPL environment, wrap it in triple backticks with 'repl' language identifier. For example, say we want our recursive model to search for the magic number in the context (assuming the context is a string), and the context is very long, so we want to chunk it:
 ```repl
@@ -198,12 +198,12 @@ def build_user_prompt(
 # Legacy exports for backward compatibility
 USER_PROMPT = (
     "Think step-by-step on what to do using the REPL environment (which contains the context) to answer the prompt.\n\n"
-    "Continue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags (and/or spawning workers if available), "
+    "Continue using the REPL environment, which has the `context` variable, and use any combination of sub-LLM calls, store-backed calls, or workers by writing to ```repl``` tags, "
     "and determine your answer. Your next action:"
 )
 USER_PROMPT_WITH_ROOT = (
     "Think step-by-step on what to do using the REPL environment (which contains the context) to answer the original prompt: "
     "\"{root_prompt}\".\n\n"
-    "Continue using the REPL environment, which has the `context` variable, and querying sub-LLMs by writing to ```repl``` tags (and/or spawning workers if available), "
+    "Continue using the REPL environment, which has the `context` variable, and use any combination of sub-LLM calls, store-backed calls, or workers by writing to ```repl``` tags, "
     "and determine your answer. Your next action:"
 )
