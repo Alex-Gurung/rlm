@@ -1,0 +1,608 @@
+{
+  "total_tests": 30,
+  "passed": 6,
+  "failed": 24,
+  "skipped": 0,
+  "pass_rate": "20.0%",
+  "model_used": "openai/Qwen/Qwen3-Coder-30B-A3B-Instruct-FP8",
+  "start_time": "2026-01-24T03:50:11.579207",
+  "end_time": "2026-01-24T03:51:02.711839",
+  "results": [
+    {
+      "test_id": "A1",
+      "test_name": "simple_explore_answer",
+      "category": "A",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 0.7907745838165283,
+      "token_usage": {
+        "prompt_tokens": 1792,
+        "completion_tokens": 61,
+        "total_tokens": 1853
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "A2",
+      "test_name": "file_based_exploration",
+      "category": "A",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found",
+        "Expected API call 'list_files' not found",
+        "Expected API call 'read_file' not found"
+      ],
+      "execution_time": 0.3475356101989746,
+      "token_usage": {
+        "prompt_tokens": 1791,
+        "completion_tokens": 49,
+        "total_tokens": 1840
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "A3",
+      "test_name": "json_data_analysis",
+      "category": "A",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.2097301483154297,
+      "token_usage": {
+        "prompt_tokens": 1792,
+        "completion_tokens": 28,
+        "total_tokens": 1820
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "A4",
+      "test_name": "multi_step_workflow",
+      "category": "A",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected API call 'list_files' not found",
+        "Expected API call 'read_file' not found"
+      ],
+      "execution_time": 0.33188700675964355,
+      "token_usage": {
+        "prompt_tokens": 1794,
+        "completion_tokens": 47,
+        "total_tokens": 1841
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "B1",
+      "test_name": "correct_list_files_usage",
+      "category": "B",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected API call 'list_files' not found"
+      ],
+      "execution_time": 0.3318319320678711,
+      "token_usage": {
+        "prompt_tokens": 1788,
+        "completion_tokens": 47,
+        "total_tokens": 1835
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "B2",
+      "test_name": "correct_read_file_usage",
+      "category": "B",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found",
+        "Expected API call 'read_file' not found"
+      ],
+      "execution_time": 0.3577690124511719,
+      "token_usage": {
+        "prompt_tokens": 1789,
+        "completion_tokens": 51,
+        "total_tokens": 1840
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "B3",
+      "test_name": "correct_llm_query_usage",
+      "category": "B",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 11.592270374298096,
+      "token_usage": {
+        "prompt_tokens": 1795,
+        "completion_tokens": 1767,
+        "total_tokens": 3562
+      },
+      "has_repl_code": true,
+      "has_exploration": true,
+      "has_analysis": true,
+      "api_calls": [
+        "llm_query",
+        "llm_query"
+      ]
+    },
+    {
+      "test_id": "B4",
+      "test_name": "correct_final_usage",
+      "category": "B",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 1.4561328887939453,
+      "token_usage": {
+        "prompt_tokens": 1789,
+        "completion_tokens": 219,
+        "total_tokens": 2008
+      },
+      "has_repl_code": true,
+      "has_exploration": true,
+      "has_analysis": true,
+      "api_calls": [
+        "llm_query"
+      ]
+    },
+    {
+      "test_id": "C1",
+      "test_name": "large_context_chunking",
+      "category": "C",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected sub-LLM usage but none detected"
+      ],
+      "execution_time": 0.4852409362792969,
+      "token_usage": {
+        "prompt_tokens": 1797,
+        "completion_tokens": 70,
+        "total_tokens": 1867
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "C2",
+      "test_name": "multi_file_synthesis",
+      "category": "C",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected API call 'list_files' not found",
+        "Expected API call 'read_file' not found"
+      ],
+      "execution_time": 0.3322021961212158,
+      "token_usage": {
+        "prompt_tokens": 1790,
+        "completion_tokens": 47,
+        "total_tokens": 1837
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "C3",
+      "test_name": "nested_json_navigation",
+      "category": "C",
+      "passed": false,
+      "failure_reasons": [
+        "Validation error: open() is not available"
+      ],
+      "execution_time": 27.08310890197754,
+      "token_usage": {
+        "prompt_tokens": 1791,
+        "completion_tokens": 4116,
+        "total_tokens": 5907
+      },
+      "has_repl_code": true,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "D1",
+      "test_name": "handle_missing_file",
+      "category": "D",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.4160044193267822,
+      "token_usage": {
+        "prompt_tokens": 1794,
+        "completion_tokens": 59,
+        "total_tokens": 1853
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "D2",
+      "test_name": "retry_on_parse_error",
+      "category": "D",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found",
+        "Expected API call 'parse_json' not found"
+      ],
+      "execution_time": 0.40505242347717285,
+      "token_usage": {
+        "prompt_tokens": 1789,
+        "completion_tokens": 58,
+        "total_tokens": 1847
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "E1",
+      "test_name": "use_llm_for_summarization",
+      "category": "E",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected sub-LLM usage but none detected",
+        "Expected API call 'llm_query' not found"
+      ],
+      "execution_time": 0.3983438014984131,
+      "token_usage": {
+        "prompt_tokens": 1795,
+        "completion_tokens": 57,
+        "total_tokens": 1852
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "E2",
+      "test_name": "use_llm_batched_for_parallel",
+      "category": "E",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected sub-LLM usage but none detected",
+        "Expected API call 'llm_query_batched' not found"
+      ],
+      "execution_time": 0.31318211555480957,
+      "token_usage": {
+        "prompt_tokens": 1795,
+        "completion_tokens": 44,
+        "total_tokens": 1839
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "E3",
+      "test_name": "synthesize_dont_delegate_final",
+      "category": "E",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected sub-LLM usage but none detected"
+      ],
+      "execution_time": 0.391618013381958,
+      "token_usage": {
+        "prompt_tokens": 1794,
+        "completion_tokens": 56,
+        "total_tokens": 1850
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "F1",
+      "test_name": "store_create_and_view",
+      "category": "F",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected API call 'store.create' not found",
+        "Expected API call 'store.view' not found"
+      ],
+      "execution_time": 0.27533769607543945,
+      "token_usage": {
+        "prompt_tokens": 2090,
+        "completion_tokens": 37,
+        "total_tokens": 2127
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "F2",
+      "test_name": "store_llm_map_parallel",
+      "category": "F",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found",
+        "Expected API call 'store.llm_map' not found",
+        "Expected API call 'store.children' not found"
+      ],
+      "execution_time": 0.2816433906555176,
+      "token_usage": {
+        "prompt_tokens": 2092,
+        "completion_tokens": 39,
+        "total_tokens": 2131
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "G1",
+      "test_name": "empty_context",
+      "category": "G",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.33278894424438477,
+      "token_usage": {
+        "prompt_tokens": 1785,
+        "completion_tokens": 47,
+        "total_tokens": 1832
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "G2",
+      "test_name": "very_short_context",
+      "category": "G",
+      "passed": false,
+      "failure_reasons": [
+        "Expected exploration but none detected",
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.3189518451690674,
+      "token_usage": {
+        "prompt_tokens": 1784,
+        "completion_tokens": 45,
+        "total_tokens": 1829
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "G3",
+      "test_name": "context_with_instructions",
+      "category": "G",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.3069300651550293,
+      "token_usage": {
+        "prompt_tokens": 1786,
+        "completion_tokens": 43,
+        "total_tokens": 1829
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "H1",
+      "test_name": "detect_no_exploration",
+      "category": "H",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.408341646194458,
+      "token_usage": {
+        "prompt_tokens": 1789,
+        "completion_tokens": 58,
+        "total_tokens": 1847
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "H2",
+      "test_name": "detect_sub_llm_for_final",
+      "category": "H",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.46625208854675293,
+      "token_usage": {
+        "prompt_tokens": 1795,
+        "completion_tokens": 67,
+        "total_tokens": 1862
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "H3",
+      "test_name": "detect_hallucinated_apis",
+      "category": "H",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.30982542037963867,
+      "token_usage": {
+        "prompt_tokens": 1787,
+        "completion_tokens": 43,
+        "total_tokens": 1830
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "M1",
+      "test_name": "after_exploration_should_analyze",
+      "category": "G",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 0.6779196262359619,
+      "token_usage": {
+        "prompt_tokens": 1766,
+        "completion_tokens": 100,
+        "total_tokens": 1866
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "M2",
+      "test_name": "after_error_should_retry",
+      "category": "D",
+      "passed": false,
+      "failure_reasons": [
+        "Expected API call 'read_file' not found"
+      ],
+      "execution_time": 0.2225480079650879,
+      "token_usage": {
+        "prompt_tokens": 1755,
+        "completion_tokens": 30,
+        "total_tokens": 1785
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": [
+        "list_files"
+      ]
+    },
+    {
+      "test_id": "M3",
+      "test_name": "after_analysis_should_final",
+      "category": "A",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 0.5066514015197754,
+      "token_usage": {
+        "prompt_tokens": 1835,
+        "completion_tokens": 73,
+        "total_tokens": 1908
+      },
+      "has_repl_code": true,
+      "has_exploration": false,
+      "has_analysis": true,
+      "api_calls": [
+        "llm_query"
+      ]
+    },
+    {
+      "test_id": "M4",
+      "test_name": "partial_results_continue",
+      "category": "A",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 0.27301979064941406,
+      "token_usage": {
+        "prompt_tokens": 1805,
+        "completion_tokens": 37,
+        "total_tokens": 1842
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": false,
+      "api_calls": [
+        "read_file"
+      ]
+    },
+    {
+      "test_id": "M5",
+      "test_name": "after_parse_error_retry",
+      "category": "D",
+      "passed": true,
+      "failure_reasons": [],
+      "execution_time": 0.22783684730529785,
+      "token_usage": {
+        "prompt_tokens": 1754,
+        "completion_tokens": 30,
+        "total_tokens": 1784
+      },
+      "has_repl_code": false,
+      "has_exploration": true,
+      "has_analysis": false,
+      "api_calls": []
+    },
+    {
+      "test_id": "M6",
+      "test_name": "dont_delegate_final_answer",
+      "category": "H",
+      "passed": false,
+      "failure_reasons": [
+        "Expected FINAL() call but none found"
+      ],
+      "execution_time": 1.2613413333892822,
+      "token_usage": {
+        "prompt_tokens": 1750,
+        "completion_tokens": 190,
+        "total_tokens": 1940
+      },
+      "has_repl_code": false,
+      "has_exploration": false,
+      "has_analysis": true,
+      "api_calls": [
+        "llm_query"
+      ]
+    }
+  ]
+}
